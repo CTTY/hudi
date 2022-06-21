@@ -75,7 +75,8 @@ public class HoodieSparkBootstrapSchemaProvider extends HoodieBootstrapSchemaPro
 
     ParquetToSparkSchemaConverter converter = new ParquetToSparkSchemaConverter(
         Boolean.parseBoolean(SQLConf.PARQUET_BINARY_AS_STRING().defaultValueString()),
-        Boolean.parseBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP().defaultValueString()));
+        Boolean.parseBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP().defaultValueString()),
+        Boolean.parseBoolean(SQLConf.CASE_SENSITIVE().defaultValueString()));
     StructType sparkSchema = converter.convert(parquetSchema);
     String tableName = HoodieAvroUtils.sanitizeName(writeConfig.getTableName());
     String structName = tableName + "_record";
