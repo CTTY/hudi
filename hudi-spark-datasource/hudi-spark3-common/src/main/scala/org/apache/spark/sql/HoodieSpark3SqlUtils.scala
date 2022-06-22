@@ -32,9 +32,10 @@ object HoodieSpark3SqlUtils {
       case IdentityTransform(FieldReference(Seq(col))) =>
         identityCols += col
 
-
-      case BucketTransform(numBuckets, FieldReference(Seq(col))) =>
-        bucketSpec = Some(BucketSpec(numBuckets, col :: Nil, Nil))
+        // TODO: Does this work?
+        // TODO: Backward compatibility?
+      case BucketTransform(numBuckets, Seq(FieldReference(Seq(col))), Seq(FieldReference(Seq(sortedCols)))) =>
+        bucketSpec = Some(BucketSpec(numBuckets, col :: Nil, sortedCols :: Nil))
 
       case _ =>
         throw new HoodieException(s"Partitioning by expressions is not supported.")
