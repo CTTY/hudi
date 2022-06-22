@@ -91,7 +91,9 @@ class BaseFileOnlyRelation(sqlContext: SQLContext,
       hadoopConf = HoodieDataSourceHelper.getConfigurationWithInternalSchema(new Configuration(conf), requiredSchema.internalSchema, metaClient.getBasePath, validCommits)
     )
 
-    new HoodieFileScanRDD(sparkSession, baseFileReader, fileSplits)
+    // TODO: which schema to use here?
+    // TODO: backward compatibility?
+    new HoodieFileScanRDD(sparkSession, baseFileReader, fileSplits, dataSchema.structTypeSchema)
   }
 
   protected def collectFileSplits(partitionFilters: Seq[Expression], dataFilters: Seq[Expression]): Seq[HoodieBaseFileSplit] = {
