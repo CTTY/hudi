@@ -1651,7 +1651,7 @@
     <profile>
       <id>spark3</id>
       <properties>
-        <spark3.version>3.3.0</spark3.version>
+        <spark3.version>3.2.1</spark3.version>
         <spark.version>${spark3.version}</spark.version>
         <sparkbundle.version>3</sparkbundle.version>
         <scala.version>${scala12.version}</scala.version>
@@ -1723,7 +1723,7 @@
         <sparkbundle.version>3.2</sparkbundle.version>
         <scala.version>${scala12.version}</scala.version>
         <scala.binary.version>2.12</scala.binary.version>
-        <hudi.spark.module>hudi-spark3</hudi.spark.module>
+        <hudi.spark.module>hudi-spark3.2</hudi.spark.module>
         <hudi.spark.common.module>hudi-spark3-common</hudi.spark.common.module>
         <scalatest.version>${scalatest.spark3.version}</scalatest.version>
         <kafka.version>${kafka.spark3.version}</kafka.version>
@@ -1740,7 +1740,7 @@
         <skipITs>true</skipITs>
       </properties>
       <modules>
-        <module>hudi-spark-datasource/hudi-spark3</module>
+        <module>hudi-spark-datasource/hudi-spark3.2</module>
         <module>hudi-spark-datasource/hudi-spark3-common</module>
       </modules>
       <activation>
