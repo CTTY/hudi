@@ -137,8 +137,8 @@ case class HoodieSpark3ResolveReferences(sparkSession: SparkSession) extends Rul
 
   def apply(plan: LogicalPlan): LogicalPlan = plan resolveOperatorsUp {
     // Fill schema for Create Table without specify schema info
-    case c @ CreateV2Table(tableCatalog, tableName, schema, partitioning, properties, _)
-      if sparkAdapter.isHoodieTable(properties.asJava) =>
+    case c @ CreateTable(tableCatalog, schema, partitioning, tableSpec, _)
+      if sparkAdapter.isHoodieTable(tableSpec.properties.asJava) =>
 
       if (schema.isEmpty && partitioning.nonEmpty) {
         failAnalysis("It is not allowed to specify partition columns when the table schema is " +
@@ -149,10 +149,14 @@ case class HoodieSpark3ResolveReferences(sparkSession: SparkSession) extends Rul
         case catalog: HoodieCatalog => catalog
         case _ => tableCatalog.asInstanceOf[V2SessionCatalog]
       }
-      val tablePath = getTableLocation(properties,
-        TableIdentifier(tableName.name(), tableName.namespace().lastOption), sparkSession)
+      val createTablePlan = tableCatalog.asInstanceOf[CreateTable]
+      // TODO is hoodieCatalog.name() tableName? how to get database
+      val ident = TableIdentifier(createTablePlan.tableName.name(),
+        createTablePlan.tableName.namespace().lastOption)
 
-      val tableExistInCatalog = hoodieCatalog.tableExists(tableName)
+      val tablePath = getTableLocation(tableSpec.properties, ident, sparkSession)
+
+      val tableExistInCatalog = hoodieCatalog.tableExists(createTablePlan.tableName)
       // Only when the table has not exist in catalog, we need to fill the schema info for creating table.
       if (!tableExistInCatalog && tableExistsInPath(tablePath, sparkSession.sessionState.newHadoopConf())) {
         val metaClient = HoodieTableMetaClient.builder()
@@ -165,7 +169,7 @@ case class HoodieSpark3ResolveReferences(sparkSession: SparkSession) extends Rul
           c.copy(tableSchema = tableSchema.get)
         } else if (tableSchema.isDefined && schema != tableSchema.get) {
           throw new AnalysisException(s"Specified schema in create table statement is not equal to the table schema." +
-            s"You should not specify the schema for an exist table: $tableName ")
+            s"You should not specify the schema for an existing table: ${createTablePlan.tableName.name()} ")
         } else {
           c
         }

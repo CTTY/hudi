@@ -402,7 +402,7 @@ class HoodieSpark3_2ExtendedSqlAstBuilder(conf: SQLConf, delegate: ParserInterfa
     } else {
       None
     }
-    DeleteFromTable(aliasedTable, predicate)
+    DeleteFromTable(aliasedTable, predicate.get)
   }
 
   override def visitUpdateTable(ctx: UpdateTableContext): LogicalPlan = withOrigin(ctx) {
