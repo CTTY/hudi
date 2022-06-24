@@ -33,6 +33,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.DateTimeUtils._
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, DateTimeUtils, IntervalUtils, truncatedString}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.BucketSpecHelper
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.ColumnPosition
 import org.apache.spark.sql.connector.expressions.{ApplyTransform, BucketTransform, DaysTransform, FieldReference, HoursTransform, IdentityTransform, LiteralValue, MonthsTransform, Transform, YearsTransform, Expression => V2Expression}
@@ -53,7 +54,7 @@ import scala.collection.mutable.ArrayBuffer
  * Here we only do the parser for the extended sql syntax. e.g MergeInto. For
  * other sql syntax we use the delegate sql parser which is the SparkSqlParser.
  */
-class HoodieSpark3_2ExtendedSqlAstBuilder(conf: SQLConf, delegate: ParserInterface)
+class HoodieSpark3_3ExtendedSqlAstBuilder(conf: SQLConf, delegate: ParserInterface)
   extends HoodieSqlBaseBaseVisitor[AnyRef] with Logging {
 
   protected def typedVisit[T](ctx: ParseTree): T = {
@@ -3230,7 +3231,7 @@ class HoodieSpark3_2ExtendedSqlAstBuilder(conf: SQLConf, delegate: ParserInterfa
   }
 
   /**
-   * Create a table, returning a [[CreateTableStatement]] logical plan.
+   * Create a table, returning a [[CreateTable]] or [[CreateTableAsSelect]] logical plan.
    *
    * Expected format:
    * {{{
@@ -3275,7 +3276,12 @@ class HoodieSpark3_2ExtendedSqlAstBuilder(conf: SQLConf, delegate: ParserInterfa
         s"CREATE TEMPORARY TABLE ...$asSelect, use CREATE TEMPORARY VIEW instead", ctx)
     }
 
-    val partitioning = partitionExpressions(partTransforms, partCols, ctx)
+    // partition transforms for BucketSpec was moved inside parser
+    // https://issues.apache.org/jira/browse/SPARK-37923
+    val partitioning =
+      partitionExpressions(partTransforms, partCols, ctx) ++ bucketSpec.map(_.asTransform)
+    val tableSpec = TableSpec(properties, provider, options, location, comment,
+      serdeInfo, external)
 
     Option(ctx.query).map(plan) match {
       case Some(_) if columns.nonEmpty =>
@@ -3289,17 +3295,20 @@ class HoodieSpark3_2ExtendedSqlAstBuilder(conf: SQLConf, delegate: ParserInterfa
           "Partition column types may not be specified in Create Table As Select (CTAS)",
           ctx)
 
+        // CreateTable / CreateTableAsSelect was migrated to v2 in Spark 3.3.0
+        // https://issues.apache.org/jira/browse/SPARK-36850
       case Some(query) =>
-        CreateTableAsSelectStatement(
-          table, query, partitioning, bucketSpec, properties, provider, options, location, comment,
-          writeOptions = Map.empty, serdeInfo, external = external, ifNotExists = ifNotExists)
+        CreateTableAsSelect(
+          UnresolvedDBObjectName(table, isNamespace = false),
+          partitioning, query, tableSpec, Map.empty, ifNotExists)
 
       case _ =>
         // Note: table schema includes both the table columns list and the partition columns
         // with data type.
         val schema = StructType(columns ++ partCols)
-        CreateTableStatement(table, schema, partitioning, bucketSpec, properties, provider,
-          options, location, comment, serdeInfo, external = external, ifNotExists = ifNotExists)
+        CreateTable(
+          UnresolvedDBObjectName(table, isNamespace = false),
+          schema, partitioning, tableSpec, ignoreIfExists = ifNotExists)
     }
   }
 

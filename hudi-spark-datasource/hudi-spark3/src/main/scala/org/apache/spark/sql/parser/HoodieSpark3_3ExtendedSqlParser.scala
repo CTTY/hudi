@@ -32,13 +32,14 @@ import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 
+class HoodieSpark3_3ExtendedSqlParser(session: SparkSession, delegate: ParserInterface)
 import scala.util.control.NonFatal
 
-class HoodieSpark3_2ExtendedSqlParser(session: SparkSession, delegate: ParserInterface)
+class HoodieSpark3_3ExtendedSqlParser(session: SparkSession, delegate: ParserInterface)
   extends ParserInterface with Logging {
 
   private lazy val conf = session.sqlContext.conf
-  private lazy val builder = new HoodieSpark3_2ExtendedSqlAstBuilder(conf, delegate)
+  private lazy val builder = new HoodieSpark3_3ExtendedSqlAstBuilder(conf, delegate)
 
   override def parsePlan(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
     try {
@@ -51,6 +52,8 @@ class HoodieSpark3_2ExtendedSqlParser(session: SparkSession, delegate: ParserInt
         delegate.parsePlan(sqlText)
     }
   }
+
+  override def parseQuery(sqlText: String): LogicalPlan = deletgate.parseQuery(sqlText)
 
   override def parseExpression(sqlText: String): Expression = delegate.parseExpression(sqlText)
 

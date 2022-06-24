@@ -20,7 +20,7 @@ package org.apache.spark.sql
 import HoodieSparkTypeUtils.isCastPreservingOrdering
 import org.apache.spark.sql.catalyst.expressions.{Add, AttributeReference, BitwiseOr, Cast, DateAdd, DateDiff, DateFormatClass, DateSub, Divide, Exp, Expm1, Expression, FromUTCTimestamp, FromUnixTime, Log, Log10, Log1p, Log2, Lower, Multiply, ParseToDate, ParseToTimestamp, ShiftLeft, ShiftRight, ToUTCTimestamp, ToUnixTimestamp, Upper}
 
-object HoodieSpark3_2CatalystExpressionUtils extends HoodieCatalystExpressionUtils {
+object HoodieSpark3_3CatalystExpressionUtils extends HoodieCatalystExpressionUtils {
 
   override def tryMatchAttributeOrderingPreservingTransformation(expr: Expression): Option[AttributeReference] = {
     expr match {
@@ -48,7 +48,9 @@ object HoodieSpark3_2CatalystExpressionUtils extends HoodieCatalystExpressionUti
         // String Expressions
         case Lower(OrderPreservingTransformation(attrRef)) => Some(attrRef)
         case Upper(OrderPreservingTransformation(attrRef)) => Some(attrRef)
-        case org.apache.spark.sql.catalyst.expressions.Left(OrderPreservingTransformation(attrRef), _, _) => Some(attrRef)
+        // Left API change: Improve RuntimeReplaceable
+        // https://issues.apache.org/jira/browse/SPARK-38240
+        case org.apache.spark.sql.catalyst.expressions.Left(OrderPreservingTransformation(attrRef), _) => Some(attrRef)
 
         // Math Expressions
         // Binary
