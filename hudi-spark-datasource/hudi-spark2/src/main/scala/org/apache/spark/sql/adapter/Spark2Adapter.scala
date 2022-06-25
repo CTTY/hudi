@@ -174,4 +174,5 @@ class Spark2Adapter extends SparkAdapter {
                                        readDataSchema: StructType,
                                        metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD = {
     new Spark2HoodieFileScanRDD(sparkSession, readFunction, filePartitions)
+  }
 }
