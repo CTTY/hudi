@@ -16,17 +16,19 @@
  * limitations under the License.
  */
 
-package org.apache.hudi
+package org.apache.spark.sql.execution.datasources
 
+import org.apache.hudi.HoodieUnsafeRDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.datasources.{FilePartition, FileScanRDD, PartitionedFile}
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.types.StructType
 
-class HoodieFileScanRDD(@transient private val sparkSession: SparkSession,
+class Spark33HoodieFileScanRDD(@transient private val sparkSession: SparkSession,
                         readFunction: PartitionedFile => Iterator[InternalRow],
-                        @transient filePartitions: Seq[FilePartition])
-  extends FileScanRDD(sparkSession, readFunction, filePartitions)
+                        @transient filePartitions: Seq[FilePartition],
+                        readDataSchema: StructType, metadataColumns: Seq[AttributeReference] = Seq.empty)
+  extends FileScanRDD(sparkSession, readFunction, filePartitions, readDataSchema, metadataColumns)
     with HoodieUnsafeRDD {
 
   override final def collect(): Array[InternalRow] = super[HoodieUnsafeRDD].collect()

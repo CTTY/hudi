@@ -52,6 +52,8 @@ class BaseFileOnlyRelation(sqlContext: SQLContext,
                            globPaths: Seq[Path])
   extends HoodieBaseRelation(sqlContext, metaClient, optParams, userSchema) with SparkAdapterSupport {
 
+  case class HoodieBaseFileSplit(filePartition: FilePartition) extends HoodieFileSplit
+
   override type FileSplit = HoodieBaseFileSplit
 
   // TODO(HUDI-3204) this is to override behavior (exclusively) for COW tables to always extract
@@ -92,8 +94,8 @@ class BaseFileOnlyRelation(sqlContext: SQLContext,
     )
 
     // TODO: which schema to use here?
-    // TODO: backward compatibility?
-    new HoodieFileScanRDD(sparkSession, baseFileReader, fileSplits, dataSchema.structTypeSchema)
+    sparkAdapter.createHoodieFileScanRDD(sparkSession, baseFileReader, fileSplits.map(_.filePartition), dataSchema.structTypeSchema)
+      .asInstanceOf[HoodieUnsafeRDD]
   }
 
   protected def collectFileSplits(partitionFilters: Seq[Expression], dataFilters: Seq[Expression]): Seq[HoodieBaseFileSplit] = {

@@ -22,17 +22,18 @@ import org.apache.spark.sql.avro._
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.SPARK_VERSION
-import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.connector.catalog.MetadataColumn
+import org.apache.spark.sql.execution.datasources.{FilePartition, FileScanRDD, PartitionedFile, Spark33HoodieFileScanRDD}
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, Spark32HoodieParquetFileFormat}
 import org.apache.spark.sql.parser.HoodieSpark3_3ExtendedSqlParser
-import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.{HoodieCatalystExpressionUtils, HoodieSpark3_3CatalystExpressionUtils, SparkSession}
 
 /**
- * Implementation of [[SparkAdapter]] for Spark 3.2.x branch
+ * Implementation of [[SparkAdapter]] for Spark 3.3.x branch
  */
-class Spark3_2Adapter extends BaseSpark3Adapter {
+class Spark3_3Adapter extends BaseSpark3Adapter {
 
   override def createAvroSerializer(rootCatalystType: DataType, rootAvroType: Schema, nullable: Boolean): HoodieAvroSerializer =
     new HoodieSpark3_2AvroSerializer(rootCatalystType, rootAvroType, nullable)
@@ -69,5 +70,13 @@ class Spark3_2Adapter extends BaseSpark3Adapter {
 
   override def createHoodieParquetFileFormat(appendPartitionValues: Boolean): Option[ParquetFileFormat] = {
     Some(new Spark32HoodieParquetFileFormat(appendPartitionValues))
+  }
+
+  override def createHoodieFileScanRDD(sparkSession: SparkSession,
+                                       readFunction: PartitionedFile => Iterator[InternalRow],
+                                       filePartitions: Seq[FilePartition],
+                                       readDataSchema: StructType,
+                                       metadataColumns: Seq[MetadataColumn] = Seq.empty): FileScanRDD = {
+    new Spark33HoodieFileScanRDD(sparkSession, readFunction, filePartitions, readDataSchema)
   }
 }
