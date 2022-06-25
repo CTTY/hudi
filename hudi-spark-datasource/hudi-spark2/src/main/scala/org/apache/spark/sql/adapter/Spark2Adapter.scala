@@ -19,14 +19,15 @@
 package org.apache.spark.sql.adapter
 
 import org.apache.avro.Schema
-import org.apache.hudi.Spark2RowSerDe
+import org.apache.hudi.{Spark2RowSerDe, Spark2HoodieFileScanRDD}
 import org.apache.hudi.client.utils.SparkRowSerDe
 import org.apache.spark.sql.avro.{HoodieAvroDeserializer, HoodieAvroSchemaConverters, HoodieAvroSerializer, HoodieSpark2_4AvroDeserializer, HoodieSpark2_4AvroSerializer, HoodieSparkAvroSchemaConverters}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.catalyst.expressions.{Expression, InterpretedPredicate, Like}
+import org.apache.spark.sql.catalyst.expressions.{Expression, InterpretedPredicate, Like, AttributeReference}
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.logical.{InsertIntoTable, Join, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.{AliasIdentifier, TableIdentifier}
@@ -35,7 +36,7 @@ import org.apache.spark.sql.execution.datasources.{FilePartition, PartitionedFil
 import org.apache.spark.sql.hudi.SparkAdapter
 import org.apache.spark.sql.hudi.parser.HoodieSpark2ExtendedSqlParser
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.{HoodieCatalystExpressionUtils, HoodieSpark2CatalystExpressionUtils, Row, SparkSession}
 
 import scala.collection.mutable.ArrayBuffer
@@ -166,4 +167,11 @@ class Spark2Adapter extends SparkAdapter {
   override def createInterpretedPredicate(e: Expression): InterpretedPredicate = {
     InterpretedPredicate.create(e)
   }
+
+  override def createHoodieFileScanRDD(sparkSession: SparkSession,
+                                       readFunction: PartitionedFile => Iterator[InternalRow],
+                                       filePartitions: Seq[FilePartition],
+                                       readDataSchema: StructType,
+                                       metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD = {
+    new Spark2HoodieFileScanRDD(sparkSession, readFunction, filePartitions)
 }

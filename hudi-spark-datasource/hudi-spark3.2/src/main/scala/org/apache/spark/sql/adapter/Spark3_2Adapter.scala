@@ -17,16 +17,19 @@
 
 package org.apache.spark.sql.adapter
 
+import org.apache.hudi.Spark32HoodieFileScanRDD
 import org.apache.avro.Schema
 import org.apache.spark.sql.avro._
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, AttributeReference}
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.SPARK_VERSION
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.execution.datasources.{FilePartition, FileScanRDD, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, Spark32HoodieParquetFileFormat}
 import org.apache.spark.sql.parser.HoodieSpark3_2ExtendedSqlParser
-import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.{HoodieCatalystExpressionUtils, HoodieSpark3_2CatalystExpressionUtils, SparkSession}
 
 /**
@@ -69,5 +72,13 @@ class Spark3_2Adapter extends BaseSpark3Adapter {
 
   override def createHoodieParquetFileFormat(appendPartitionValues: Boolean): Option[ParquetFileFormat] = {
     Some(new Spark32HoodieParquetFileFormat(appendPartitionValues))
+  }
+
+  override def createHoodieFileScanRDD(sparkSession: SparkSession,
+                                       readFunction: PartitionedFile => Iterator[InternalRow],
+                                       filePartitions: Seq[FilePartition],
+                                       readDataSchema: StructType,
+                                       metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD = {
+    new Spark32HoodieFileScanRDD(sparkSession, readFunction, filePartitions)
   }
 }
