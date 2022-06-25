@@ -79,4 +79,9 @@ class Spark3_3Adapter extends BaseSpark3Adapter {
                                        metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD = {
     new Spark33HoodieFileScanRDD(sparkSession, readFunction, filePartitions, readDataSchema, metadataColumns)
   }
+
+
+  override def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): DeleteFromTable = {
+    DeleteFromTable(table, condition.get)
+  }
 }

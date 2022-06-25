@@ -141,6 +141,7 @@ abstract class BaseSpark3Adapter extends SparkAdapter with Logging {
   override def getRelationTimeTravel(plan: LogicalPlan): Option[(LogicalPlan, Option[Expression], Option[String])] = {
     throw new IllegalStateException(s"Should not call getRelationTimeTravel for spark3.1.x")
   }
+
   override def createExtendedSparkParser: Option[(SparkSession, ParserInterface) => ParserInterface] = {
     // since spark3.2.1 support datasourceV2, so we need to a new SqlParser to deal DDL statment
     if (SPARK_VERSION.startsWith("3.1")) {

@@ -20,9 +20,9 @@ package org.apache.spark.sql.adapter
 import org.apache.hudi.Spark32HoodieFileScanRDD
 import org.apache.avro.Schema
 import org.apache.spark.sql.avro._
-import org.apache.spark.sql.catalyst.expressions.{Expression, AttributeReference}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.parser.ParserInterface
-import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan, _}
 import org.apache.spark.SPARK_VERSION
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -80,5 +80,9 @@ class Spark3_2Adapter extends BaseSpark3Adapter {
                                        readDataSchema: StructType,
                                        metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD = {
     new Spark32HoodieFileScanRDD(sparkSession, readFunction, filePartitions)
+  }
+
+  override def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): DeleteFromTable = {
+    DeleteFromTable(table, condition)
   }
 }
