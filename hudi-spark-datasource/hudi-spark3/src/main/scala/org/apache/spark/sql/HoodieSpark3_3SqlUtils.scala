@@ -23,7 +23,7 @@ import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReferen
 
 import scala.collection.mutable
 
-object HoodieSpark3SqlUtils {
+object HoodieSpark3_3SqlUtils {
   def convertTransforms(partitions: Seq[Transform]): (Seq[String], Option[BucketSpec]) = {
     val identityCols = new mutable.ArrayBuffer[String]
     var bucketSpec = Option.empty[BucketSpec]
@@ -32,10 +32,8 @@ object HoodieSpark3SqlUtils {
       case IdentityTransform(FieldReference(Seq(col))) =>
         identityCols += col
 
-        // TODO: Does this work?
-        // TODO: Backward compatibility?
-      case BucketTransform(numBuckets, Seq(FieldReference(Seq(col))), Seq(FieldReference(Seq(sortedCols)))) =>
-        bucketSpec = Some(BucketSpec(numBuckets, col :: Nil, sortedCols :: Nil))
+      case BucketTransform(numBuckets, Seq(FieldReference(Seq(col))), _) =>
+        bucketSpec = Some(BucketSpec(numBuckets, col :: Nil, Nil))
 
       case _ =>
         throw new HoodieException(s"Partitioning by expressions is not supported.")
