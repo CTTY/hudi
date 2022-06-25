@@ -161,9 +161,4 @@ abstract class BaseSpark3Adapter extends SparkAdapter with Logging {
   override def createInterpretedPredicate(e: Expression): InterpretedPredicate = {
     Predicate.createInterpreted(e)
   }
-
-  /**
-   * Get [[DeleteFromTable]]
-   * */
-  def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): DeleteFromTable
 }

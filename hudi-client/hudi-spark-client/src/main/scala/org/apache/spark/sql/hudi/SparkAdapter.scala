@@ -187,4 +187,9 @@ trait SparkAdapter extends Serializable {
                               @transient filePartitions: Seq[FilePartition],
                               readDataSchema: StructType,
                               metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD
+
+  /**
+   * Get [[DeleteFromTable]]
+   * */
+  def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): LogicalPlan
 }

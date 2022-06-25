@@ -19,12 +19,12 @@
 package org.apache.spark.sql.adapter
 
 import org.apache.avro.Schema
-import org.apache.hudi.{Spark2RowSerDe, Spark2HoodieFileScanRDD}
+import org.apache.hudi.{Spark2HoodieFileScanRDD, Spark2RowSerDe}
 import org.apache.hudi.client.utils.SparkRowSerDe
 import org.apache.spark.sql.avro.{HoodieAvroDeserializer, HoodieAvroSchemaConverters, HoodieAvroSerializer, HoodieSpark2_4AvroDeserializer, HoodieSpark2_4AvroSerializer, HoodieSparkAvroSchemaConverters}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.catalyst.expressions.{Expression, InterpretedPredicate, Like, AttributeReference}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, InterpretedPredicate, Like}
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.InternalRow
@@ -174,5 +174,9 @@ class Spark2Adapter extends SparkAdapter {
                                        readDataSchema: StructType,
                                        metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD = {
     new Spark2HoodieFileScanRDD(sparkSession, readFunction, filePartitions)
+  }
+
+  override def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): LogicalPlan = {
+    throw new UnsupportedOperationException(s"DeleteFromTable LogicalPlan is not supported on Spark 2.x!")
   }
 }
