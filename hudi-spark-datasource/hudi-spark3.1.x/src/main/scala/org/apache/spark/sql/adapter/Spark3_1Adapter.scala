@@ -21,7 +21,7 @@ package org.apache.spark.sql.adapter
 import org.apache.hudi.Spark31HoodieFileScanRDD
 import org.apache.avro.Schema
 import org.apache.spark.SPARK_VERSION
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.avro.{HoodieAvroDeserializer, HoodieAvroSerializer, HoodieSpark3_1AvroDeserializer, HoodieSpark3_1AvroSerializer}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.logical._

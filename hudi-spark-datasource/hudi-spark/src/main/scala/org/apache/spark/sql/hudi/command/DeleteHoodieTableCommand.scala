@@ -21,6 +21,7 @@ import org.apache.hudi.SparkAdapterSupport
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.HoodieCatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.hudi.HoodieSqlCommonUtils._
 import org.apache.spark.sql.hudi.ProvidesHoodieConfig
 
@@ -37,9 +38,10 @@ case class DeleteHoodieTableCommand(deleteTable: DeleteFromTable) extends Hoodie
     // Remove meta fields from the data frame
     var df = removeMetaFields(Dataset.ofRows(sparkSession, table))
     // SPARK-38626 DeleteFromTable.condition is changed from Option[Expression] to Expression in Spark 3.3
-    val condition = deleteTable.condition match {
-      case option: Option[_] => option.get
-      case _ => deleteTable.condition
+    val condition: Expression = deleteTable.condition match {
+      case option: Option[Expression] => option.get
+      case expr: Expression => expr
+      case _ => throw new IllegalArgumentException(s"DeleteFromTable.condition has to be either Option[Expression] or Expression")
     }
     df = df.filter(Column(condition))
 
