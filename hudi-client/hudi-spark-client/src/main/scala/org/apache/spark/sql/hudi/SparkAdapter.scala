@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, InterpretedPredicate}
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.JoinType
-import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, Join, LogicalPlan, SubqueryAlias}
+import org.apache.spark.sql.catalyst.plans.logical.{Join, LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.{AliasIdentifier, InternalRow, TableIdentifier}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.{FilePartition, FileScanRDD, LogicalRelation, PartitionedFile, SparkParsePartitionUtil}
@@ -187,9 +187,4 @@ trait SparkAdapter extends Serializable {
                               @transient filePartitions: Seq[FilePartition],
                               readDataSchema: StructType,
                               metadataColumns: Seq[AttributeReference] = Seq.empty): FileScanRDD
-
-  /**
-   * Get [[DeleteFromTable]]
-   * */
-  def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): DeleteFromTable
 }
