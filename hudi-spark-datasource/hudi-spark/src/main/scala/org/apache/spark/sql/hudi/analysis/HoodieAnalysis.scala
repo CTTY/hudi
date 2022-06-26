@@ -413,10 +413,8 @@ case class HoodieResolveReferences(sparkSession: SparkSession) extends Rule[Logi
     // Resolve Delete Table
     case DeleteFromTable(table, condition)
       if sparkAdapter.isHoodieTable(table, sparkSession) && table.resolved =>
-      // Resolve condition
-      val resolvedCondition = condition.map(resolveExpressionFrom(table)(_))
       // Return the resolved DeleteTable
-      sparkAdapter.getDeleteFromTable(table, resolvedCondition)
+      sparkAdapter.getDeleteFromTable(table, Option(resolveExpressionFrom(table)(condition)))
 
     // Append the meta field to the insert query to walk through the validate for the
     // number of insert fields with the number of the target table fields.
