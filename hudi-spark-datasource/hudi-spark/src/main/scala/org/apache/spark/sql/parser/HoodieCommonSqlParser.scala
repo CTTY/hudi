@@ -57,13 +57,6 @@ class HoodieCommonSqlParser(session: SparkSession, delegate: ParserInterface)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
 
-  override def parseQuery(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
-    builder.visit(parser.singleStatement()) match {
-      case plan: LogicalPlan => plan
-      case _=> sparkExtendedParser.parsePlan(sqlText)
-    }
-  }
-
   def parseRawDataType(sqlText : String) : DataType = {
     throw new UnsupportedOperationException(s"Unsupported parseRawDataType method")
   }

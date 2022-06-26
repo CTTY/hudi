@@ -33,9 +33,6 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 
 class HoodieSpark3_3ExtendedSqlParser(session: SparkSession, delegate: ParserInterface)
-import scala.util.control.NonFatal
-
-class HoodieSpark3_3ExtendedSqlParser(session: SparkSession, delegate: ParserInterface)
   extends ParserInterface with Logging {
 
   private lazy val conf = session.sqlContext.conf
