@@ -179,4 +179,9 @@ class Spark2Adapter extends SparkAdapter {
   override def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): LogicalPlan = {
     throw new UnsupportedOperationException(s"DeleteFromTable LogicalPlan is not supported on Spark 2.x!")
   }
+
+  override def getQueryParserFromExtendedSqlParser(session: SparkSession, delegate: ParserInterface,
+                                                   sqlText: String): LogicalPlan = {
+    throw new UnsupportedOperationException(s"Unsupported parseQuery method in Spark earlier than Spark 3.3.0")
+  }
 }
