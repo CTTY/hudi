@@ -164,8 +164,8 @@
         <configuration>
           <visitor>true</visitor>
           <listener>true</listener>
-          <sourceDirectory>/src/main/antlr4</sourceDirectory>
-          <libDirectory>/src/main/antlr4/imports</libDirectory>
+          <sourceDirectory>../hudi-spark3.3/src/main/antlr4</sourceDirectory>
+          <libDirectory>../hudi-spark3.3/src/main/antlr4/imports</libDirectory>
         </configuration>
       </plugin>
     </plugins>
