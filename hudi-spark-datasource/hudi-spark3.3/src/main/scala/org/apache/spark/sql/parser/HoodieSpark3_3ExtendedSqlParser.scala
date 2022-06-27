@@ -52,6 +52,8 @@ class HoodieSpark3_3ExtendedSqlParser(session: SparkSession, delegate: ParserInt
     }
   }
 
+  // SPARK-37266 Added parseQuery to ParserInterface in Spark 3.3.0
+  // Don't mark this as override for backward compatibility
   def parseQuery(sqlText: String): LogicalPlan = delegate.parseQuery(sqlText)
 
   override def parseExpression(sqlText: String): Expression = delegate.parseExpression(sqlText)

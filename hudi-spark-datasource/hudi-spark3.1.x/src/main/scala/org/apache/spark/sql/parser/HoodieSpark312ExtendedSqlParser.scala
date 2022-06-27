@@ -25,5 +25,11 @@ import org.apache.spark.sql.execution.{SparkSqlAstBuilder, SparkSqlParser}
 // TODO: we should remove this file when we support datasourceV2 for hoodie on spark3.1x
 class HoodieSpark312ExtendedSqlParser(session: SparkSession, delegate: ParserInterface) extends SparkSqlParser with Logging {
   override val astBuilder: SparkSqlAstBuilder = new HoodieSpark312SqlAstBuilder(session)
+
+  // SPARK-37266 Added parseQuery to ParserInterface in Spark 3.3.0
+  // Don't mark this as override for backward compatibility
+  def parseQuery(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
+    throw new UnsupportedOperationException(s"Unsupported parseQuery method in Spark earlier than Spark 3.3.0")
+  }
 }
 
