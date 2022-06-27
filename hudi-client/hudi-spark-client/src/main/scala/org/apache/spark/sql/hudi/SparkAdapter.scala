@@ -192,4 +192,7 @@ trait SparkAdapter extends Serializable {
    * Get [[DeleteFromTable]]
    * */
   def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): LogicalPlan
+
+  def getQueryParserFromExtendedSqlParser(session: SparkSession, delegate: ParserInterface,
+                                          sqlText: String): LogicalPlan
 }

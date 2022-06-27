@@ -64,12 +64,6 @@ class HoodieSpark3_2ExtendedSqlParser(session: SparkSession, delegate: ParserInt
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
 
-  // SPARK-37266 Added parseQuery to ParserInterface in Spark 3.3.0
-  // Don't mark this as override for backward compatibility
-  def parseQuery(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
-    throw new UnsupportedOperationException(s"Unsupported parseQuery method in Spark earlier than Spark 3.3.0")
-  }
-
   protected def parse[T](command: String)(toResult: HoodieSqlBaseParser => T): T = {
     logDebug(s"Parsing command: $command")
 

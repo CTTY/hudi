@@ -84,4 +84,9 @@ class Spark3_3Adapter extends BaseSpark3Adapter {
   override def getDeleteFromTable(table: LogicalPlan, condition: Option[Expression]): DeleteFromTable = {
     DeleteFromTable(table, condition.get)
   }
+
+  override def getQueryParserFromExtendedSqlParser(session: SparkSession, delegate: ParserInterface,
+                                                   sqlText: String): LogicalPlan = {
+    new HoodieSpark3_3ExtendedSqlParser(session, delegate).parseQuery(sqlText)
+  }
 }
