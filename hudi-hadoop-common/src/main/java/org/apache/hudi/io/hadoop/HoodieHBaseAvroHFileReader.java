@@ -103,9 +103,8 @@ public class HoodieHBaseAvroHFileReader extends HoodieAvroHFileReaderImplBase {
     this(path, storage, storageConf, schemaOpt, Option.of(content));
   }
 
-  public HoodieHBaseAvroHFileReader(StorageConfiguration<?> storageConf, StoragePath path) throws IOException {
-    // TODO: Need to revisit this to pass an actual storage strategy in
-    this(storageConf, new DefaultStorageStrategy(), path, Option.empty());
+  public HoodieHBaseAvroHFileReader(StorageConfiguration<?> storageConf, StorageStrategy storageStrategy, StoragePath path) throws IOException {
+    this(storageConf, storageStrategy, path, Option.empty());
   }
 
   public HoodieHBaseAvroHFileReader(StoragePath path, HoodieStorage storage, StorageConfiguration<?> storageConf,

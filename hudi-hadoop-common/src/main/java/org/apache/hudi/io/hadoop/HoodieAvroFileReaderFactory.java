@@ -53,7 +53,7 @@ public class HoodieAvroFileReaderFactory extends HoodieFileReaderFactory {
     if (schemaOption.isPresent()) {
       return new HoodieHBaseAvroHFileReader(storage.getConf(), storage.getStorageStrategy(), path,  schemaOption);
     }
-    return new HoodieHBaseAvroHFileReader(storage.getConf(), path);
+    return new HoodieHBaseAvroHFileReader(storage.getConf(), storage.getStorageStrategy(), path);
   }
 
   @Override
