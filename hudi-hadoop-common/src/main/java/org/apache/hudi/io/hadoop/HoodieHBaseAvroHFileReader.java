@@ -36,7 +36,6 @@ import org.apache.hudi.storage.HoodieStorage;
 import org.apache.hudi.storage.StorageConfiguration;
 import org.apache.hudi.storage.StoragePath;
 import org.apache.hudi.storage.hadoop.HoodieHadoopStorage;
-import org.apache.hudi.storage.strategy.DefaultStorageStrategy;
 import org.apache.hudi.storage.strategy.StorageStrategy;
 import org.apache.hudi.util.Lazy;
 
