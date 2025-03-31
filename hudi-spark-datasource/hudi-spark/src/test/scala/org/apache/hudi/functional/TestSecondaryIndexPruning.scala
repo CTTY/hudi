@@ -221,6 +221,71 @@ class TestSecondaryIndexPruning extends SparkClientFunctionalTestHarness {
   }
 
   @Test
+  def testBitmapIndexWithFilters(): Unit = {
+    val hoodieTableType = HoodieTableType.COPY_ON_WRITE
+    val tableType = hoodieTableType.name()
+    val isPartitioned = true
+    var hudiOpts = commonOpts
+    hudiOpts = hudiOpts ++ Map(
+      DataSourceWriteOptions.TABLE_TYPE.key -> tableType,
+      DataSourceReadOptions.ENABLE_DATA_SKIPPING.key -> "true")
+    val sqlTableType = if (tableType.equals(HoodieTableType.COPY_ON_WRITE.name())) "cow" else "mor"
+    tableName += "test_bitmap_index_with_filters" + (if (isPartitioned) "_partitioned" else "") + sqlTableType
+    val partitionedByClause = if (isPartitioned) "partitioned by(partition_key_col)" else ""
+
+    spark.sql(
+      s"""
+         |create table $tableName (
+         |  ts bigint,
+         |  record_key_col string,
+         |  not_record_key_col string,
+         |  partition_key_col string
+         |) using hudi
+         | options (
+         |  primaryKey ='record_key_col',
+         |  type = '$sqlTableType',
+         |  hoodie.metadata.enable = 'true',
+         |  hoodie.metadata.record.index.enable = 'true',
+         |  hoodie.datasource.write.recordkey.field = 'record_key_col',
+         |  hoodie.enable.data.skipping = 'true',
+         |  hoodie.datasource.write.payload.class = "org.apache.hudi.common.model.OverwriteWithLatestAvroPayload"
+         | )
+         | $partitionedByClause
+         | location '$basePath'
+       """.stripMargin)
+    // by setting small file limit to 0, each insert will create a new file
+    // need to generate more file for non-partitioned table to test data skipping
+    // as the partitioned table will have only one file per partition
+    spark.sql("set hoodie.parquet.small.file.limit=0")
+    spark.sql(s"insert into $tableName values(1, 'row1', 'abc', 'p1')")
+    spark.sql(s"insert into $tableName values(2, 'row2', 'cde', 'p2')")
+    spark.sql(s"insert into $tableName values(3, 'row3', 'def', 'p2')")
+    // create bitmap index
+    // TODO add syntax to add bitmap index
+    spark.sql(s"create index idx_not_record_key_col on $tableName (not_record_key_col)")
+    // validate index created successfully
+    metaClient = HoodieTableMetaClient.builder()
+      .setBasePath(basePath)
+      .setConf(HoodieTestUtils.getDefaultStorageConf)
+      .build()
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index_idx_not_record_key_col"))
+    // validate the secondary index records themselves
+    checkAnswer(s"select key from hudi_metadata('$basePath') where type=7")(
+      Seq(s"abc${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row1"),
+      Seq(s"cde${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row2"),
+      Seq(s"def${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row3")
+    )
+    // validate data skipping with filters on secondary key column
+    spark.sql("set hoodie.metadata.enable=true")
+    spark.sql("set hoodie.enable.data.skipping=true")
+    spark.sql("set hoodie.fileIndex.dataSkippingFailureMode=strict")
+    checkAnswer(s"select ts, record_key_col, not_record_key_col, partition_key_col from $tableName where not_record_key_col = 'abc'")(
+      Seq(1, "row1", "abc", "p1")
+    )
+    verifyQueryPredicate(hudiOpts, "not_record_key_col")
+  }
+
+  @Test
   def testCreateAndDropSecondaryIndex(): Unit = {
     var hudiOpts = commonOpts
     hudiOpts = hudiOpts ++ Map(

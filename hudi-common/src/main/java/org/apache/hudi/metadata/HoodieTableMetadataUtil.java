@@ -179,6 +179,7 @@ import static org.apache.hudi.metadata.HoodieMetadataPayload.RECORD_INDEX_MISSIN
 import static org.apache.hudi.metadata.HoodieTableMetadata.EMPTY_PARTITION_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadata.NON_PARTITIONED_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadata.SOLO_COMMIT_TIMESTAMP;
+import static org.apache.hudi.metadata.MetadataPartitionType.isNewBitmapIndexDefinitionRequired;
 import static org.apache.hudi.metadata.MetadataPartitionType.isNewExpressionIndexDefinitionRequired;
 import static org.apache.hudi.metadata.MetadataPartitionType.isNewSecondaryIndexDefinitionRequired;
 
@@ -198,6 +199,8 @@ public class HoodieTableMetadataUtil {
   public static final String PARTITION_NAME_EXPRESSION_INDEX_PREFIX = "expr_index_";
   public static final String PARTITION_NAME_SECONDARY_INDEX = "secondary_index";
   public static final String PARTITION_NAME_SECONDARY_INDEX_PREFIX = "secondary_index_";
+  public static final String PARTITION_NAME_BITMAP_INDEX = "bitmap_index";
+  public static final String PARTITION_NAME_BITMAP_INDEX_PREFIX = "bitmap_index_";
 
   private static final Set<Schema.Type> SUPPORTED_TYPES_PARTITION_STATS = new HashSet<>(Arrays.asList(
       Schema.Type.INT, Schema.Type.LONG, Schema.Type.FLOAT, Schema.Type.DOUBLE, Schema.Type.STRING, Schema.Type.BOOLEAN, Schema.Type.NULL, Schema.Type.BYTES));
@@ -2926,6 +2929,19 @@ public class HoodieTableMetadataUtil {
     );
   }
 
+  public static Set<String> getBitmapIndexPartitionsToInit(MetadataPartitionType partitionType, HoodieMetadataConfig metadataConfig, HoodieTableMetaClient dataMetaClient) {
+    return getIndexPartitionsToInit(
+            partitionType,
+            metadataConfig,
+            dataMetaClient,
+            () -> isNewBitmapIndexDefinitionRequired(metadataConfig, dataMetaClient),
+            metadataConfig::getBitmapIndexColumn,
+            metadataConfig::getBitmapIndexName,
+            PARTITION_NAME_BITMAP_INDEX_PREFIX,
+            PARTITION_NAME_BITMAP_INDEX
+    );
+  }
+
   /**
    * Fetches uninitialized index partitions for the given partition type.
    * If no such partitions are found and a new index definition is required,
@@ -2976,6 +2992,7 @@ public class HoodieTableMetadataUtil {
 
     return indexPartitionsToInit;
   }
+
 
   public static String getSecondaryOrExpressionIndexName(Supplier<String> getConfiguredIndexName, String partitionNamePrefix, String indexedColumn) {
     String indexName = getConfiguredIndexName.get();

@@ -18,6 +18,7 @@
 
 package org.apache.hudi.metadata;
 
+import org.apache.hudi.avro.model.HoodieBitmapIndexInfo;
 import org.apache.hudi.avro.model.HoodieMetadataBloomFilter;
 import org.apache.hudi.avro.model.HoodieMetadataColumnStats;
 import org.apache.hudi.avro.model.HoodieMetadataFileInfo;
@@ -74,8 +75,10 @@ import static org.apache.hudi.metadata.HoodieMetadataPayload.SCHEMA_FIELD_ID_BLO
 import static org.apache.hudi.metadata.HoodieMetadataPayload.SCHEMA_FIELD_ID_COLUMN_STATS;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.SCHEMA_FIELD_ID_RECORD_INDEX;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.SCHEMA_FIELD_ID_SECONDARY_INDEX;
+import static org.apache.hudi.metadata.HoodieMetadataPayload.SCHEMA_FIELD_ID_BITMAP_INDEX;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.SCHEMA_FIELD_NAME_METADATA;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.SECONDARY_INDEX_FIELD_IS_DELETED;
+import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_EXPRESSION_INDEX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_EXPRESSION_INDEX_PREFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX;
@@ -219,6 +222,36 @@ public enum MetadataPartitionType {
       GenericRecord secondaryIndexRecord = getNestedFieldValue(record, SCHEMA_FIELD_ID_SECONDARY_INDEX);
       checkState(secondaryIndexRecord != null, "Valid SecondaryIndexMetadata record expected for type: " + MetadataPartitionType.SECONDARY_INDEX.getRecordType());
       payload.secondaryIndexMetadata = new HoodieSecondaryIndexInfo((Boolean) secondaryIndexRecord.get(SECONDARY_INDEX_FIELD_IS_DELETED));
+    }
+
+    @Override
+    public String getPartitionPath(HoodieTableMetaClient metaClient, String indexName) {
+      checkArgument(metaClient.getIndexMetadata().isPresent(), "Index definition is not present for index: " + indexName);
+      return metaClient.getIndexMetadata().get().getIndexDefinitions().get(indexName).getIndexName();
+    }
+  },
+  BITMAP_INDEX(HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX_PREFIX, "bitmap-index-", 8) {
+    @Override
+    public boolean isMetadataPartitionEnabled(TypedProperties writeConfig) {
+      // TODO(shawn): add bitmap index props
+      return getBooleanWithAltKeys(writeConfig, SECONDARY_INDEX_ENABLE_PROP);
+    }
+
+    @Override
+    public boolean isMetadataPartitionAvailable(HoodieTableMetaClient metaClient) {
+      if (metaClient.getIndexMetadata().isPresent()) {
+        return metaClient.getIndexMetadata().get().getIndexDefinitions().values().stream()
+                .anyMatch(indexDef -> indexDef.getIndexName().startsWith(HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX_PREFIX));
+      }
+      return false;
+    }
+
+    @Override
+    public void constructMetadataPayload(HoodieMetadataPayload payload, GenericRecord record) {
+      GenericRecord bitmapIndexRecord = getNestedFieldValue(record, SCHEMA_FIELD_ID_BITMAP_INDEX);
+      checkState(bitmapIndexRecord != null, "Valid SecondaryIndexMetadata record expected for type: " + MetadataPartitionType.BITMAP_INDEX.getRecordType());
+      // TODO revisit the isDeleted logic for bitmap index
+      payload.bitmapIndexMetadata = new HoodieBitmapIndexInfo((Boolean) bitmapIndexRecord.get(SECONDARY_INDEX_FIELD_IS_DELETED));
     }
 
     @Override
@@ -476,6 +509,16 @@ public enum MetadataPartitionType {
     }
     // check the index definition already exists or not for this column
     List<HoodieIndexDefinition> indexDefinitions = getIndexDefinitions(secondaryIndexColumn, PARTITION_NAME_SECONDARY_INDEX, dataMetaClient);
+    return indexDefinitions.isEmpty();
+  }
+
+  public static boolean isNewBitmapIndexDefinitionRequired(HoodieMetadataConfig metadataConfig, HoodieTableMetaClient dataMetaClient) {
+    String bitmapIndexColumn = metadataConfig.getBitmapIndexColumn();
+    if (StringUtils.isNullOrEmpty(bitmapIndexColumn)) {
+      return false;
+    }
+    // check the index definition already exists or not for this column
+    List<HoodieIndexDefinition> indexDefinitions = getIndexDefinitions(bitmapIndexColumn, PARTITION_NAME_BITMAP_INDEX, dataMetaClient);
     return indexDefinitions.isEmpty();
   }
 

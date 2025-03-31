@@ -47,6 +47,7 @@ import java.util.stream.Collectors;
 import static org.apache.hudi.common.model.WriteConcurrencyMode.NON_BLOCKING_CONCURRENCY_CONTROL;
 import static org.apache.hudi.common.model.WriteConcurrencyMode.OPTIMISTIC_CONCURRENCY_CONTROL;
 import static org.apache.hudi.config.HoodieWriteConfig.WRITE_CONCURRENCY_MODE;
+import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX_PREFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_EXPRESSION_INDEX_PREFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX_PREFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.deleteMetadataPartition;
@@ -131,6 +132,7 @@ public class ScheduleIndexActionExecutor<T, I, K, O> extends BaseActionExecutor<
     return Option.empty();
   }
 
+  // TODO probably need to refactor this or move this to HoodieTableMetadataUtil
   private HoodieIndexPartitionInfo buildIndexPartitionInfo(MetadataPartitionType partitionType, HoodieInstant indexUptoInstant) {
     String partitionName = partitionType.getPartitionPath();
     HoodieMetadataConfig metadataConfig = config.getMetadataConfig();
@@ -141,6 +143,10 @@ public class ScheduleIndexActionExecutor<T, I, K, O> extends BaseActionExecutor<
     if (MetadataPartitionType.SECONDARY_INDEX.equals(partitionType)) {
       partitionName = getSecondaryOrExpressionIndexName(metadataConfig::getSecondaryIndexName, PARTITION_NAME_SECONDARY_INDEX_PREFIX, metadataConfig.getSecondaryIndexColumn());
     }
+    if (MetadataPartitionType.BITMAP_INDEX.equals(partitionType)) {
+      partitionName = getSecondaryOrExpressionIndexName(metadataConfig::getBitmapIndexName, PARTITION_NAME_BITMAP_INDEX_PREFIX, metadataConfig.getBitmapIndexColumn());
+    }
+
     return new HoodieIndexPartitionInfo(LATEST_INDEX_PLAN_VERSION, partitionName, indexUptoInstant.requestedTime(), Collections.emptyMap());
   }
 

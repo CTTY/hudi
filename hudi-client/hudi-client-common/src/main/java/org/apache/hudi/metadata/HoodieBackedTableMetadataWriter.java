@@ -108,6 +108,7 @@ import static org.apache.hudi.metadata.HoodieMetadataWriteUtils.createMetadataWr
 import static org.apache.hudi.metadata.HoodieTableMetadata.METADATA_TABLE_NAME_SUFFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadata.SOLO_COMMIT_TIMESTAMP;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX_PREFIX;
+import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getBitmapIndexPartitionsToInit;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getExpressionIndexPartitionsToInit;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getInflightMetadataPartitions;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getPartitionLatestFileSlicesIncludingInflight;
@@ -474,6 +475,18 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
               continue;
             }
             partitionName = secondaryIndexPartitionsToInit.iterator().next();
+            fileGroupCountAndRecordsPair = initializeSecondaryIndexPartition(partitionName);
+            break;
+          case BITMAP_INDEX:
+            Set<String> bitmapIndexPartitionsToInit = getBitmapIndexPartitionsToInit(partitionType, dataWriteConfig.getMetadataConfig(), dataMetaClient);
+            if (bitmapIndexPartitionsToInit.size() != 1) {
+              if (bitmapIndexPartitionsToInit.size() > 1) {
+                LOG.warn("Skipping bitmap index initialization as only one bitmap index bootstrap at a time is supported for now. Provided: {}", bitmapIndexPartitionsToInit);
+              }
+              continue;
+            }
+            partitionName = bitmapIndexPartitionsToInit.iterator().next();
+            // TODO add initializeBitmapIndexPartition
             fileGroupCountAndRecordsPair = initializeSecondaryIndexPartition(partitionName);
             break;
           default:

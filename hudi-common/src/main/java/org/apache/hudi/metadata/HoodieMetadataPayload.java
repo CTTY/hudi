@@ -24,6 +24,7 @@ import org.apache.hudi.avro.model.HoodieMetadataFileInfo;
 import org.apache.hudi.avro.model.HoodieMetadataRecord;
 import org.apache.hudi.avro.model.HoodieRecordIndexInfo;
 import org.apache.hudi.avro.model.HoodieSecondaryIndexInfo;
+import org.apache.hudi.avro.model.HoodieBitmapIndexInfo;
 import org.apache.hudi.common.fs.FSUtils;
 import org.apache.hudi.common.model.EmptyHoodieRecordPayload;
 import org.apache.hudi.common.model.HoodieAvroRecord;
@@ -110,6 +111,7 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
   public static final String SCHEMA_FIELD_ID_BLOOM_FILTER = "BloomFilterMetadata";
   public static final String SCHEMA_FIELD_ID_RECORD_INDEX = "recordIndexMetadata";
   public static final String SCHEMA_FIELD_ID_SECONDARY_INDEX = "SecondaryIndexMetadata";
+  public static final String SCHEMA_FIELD_ID_BITMAP_INDEX = "BitmapIndexMetadata";
 
   /**
    * HoodieMetadata bloom filter payload field ids
@@ -184,6 +186,7 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
   protected HoodieMetadataColumnStats columnStatMetadata = null;
   protected HoodieRecordIndexInfo recordIndexMetadata;
   protected HoodieSecondaryIndexInfo secondaryIndexMetadata;
+  protected HoodieBitmapIndexInfo bitmapIndexMetadata;
   private boolean isDeletedRecord = false;
 
   public HoodieMetadataPayload(@Nullable GenericRecord record, Comparable<?> orderingVal) {
@@ -208,23 +211,27 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
   }
 
   protected HoodieMetadataPayload(String key, int type, Map<String, HoodieMetadataFileInfo> filesystemMetadata) {
-    this(key, type, filesystemMetadata, null, null, null, null, false);
+    this(key, type, filesystemMetadata, null, null, null, null, null, false);
   }
 
   protected HoodieMetadataPayload(String key, HoodieMetadataBloomFilter metadataBloomFilter) {
-    this(key, MetadataPartitionType.BLOOM_FILTERS.getRecordType(), null, metadataBloomFilter, null, null, null, metadataBloomFilter.getIsDeleted());
+    this(key, MetadataPartitionType.BLOOM_FILTERS.getRecordType(), null, metadataBloomFilter, null, null, null, null, metadataBloomFilter.getIsDeleted());
   }
 
   protected HoodieMetadataPayload(String key, HoodieMetadataColumnStats columnStats, int recordType) {
-    this(key, recordType, null, null, columnStats, null, null, columnStats.getIsDeleted());
+    this(key, recordType, null, null, columnStats, null, null, null, columnStats.getIsDeleted());
   }
 
   private HoodieMetadataPayload(String key, HoodieRecordIndexInfo recordIndexMetadata) {
-    this(key, MetadataPartitionType.RECORD_INDEX.getRecordType(), null, null, null, recordIndexMetadata, null, false);
+    this(key, MetadataPartitionType.RECORD_INDEX.getRecordType(), null, null, null, recordIndexMetadata, null, null, false);
   }
 
   protected HoodieMetadataPayload(String key, HoodieSecondaryIndexInfo secondaryIndexMetadata) {
-    this(key, MetadataPartitionType.SECONDARY_INDEX.getRecordType(), null, null, null, null, secondaryIndexMetadata, secondaryIndexMetadata.getIsDeleted());
+    this(key, MetadataPartitionType.SECONDARY_INDEX.getRecordType(), null, null, null, null, secondaryIndexMetadata, null, secondaryIndexMetadata.getIsDeleted());
+  }
+
+  protected HoodieMetadataPayload(String key, HoodieBitmapIndexInfo bitmapIndexMetadata) {
+    this(key, MetadataPartitionType.SECONDARY_INDEX.getRecordType(), null, null, null, null, null, bitmapIndexMetadata, false);
   }
 
   protected HoodieMetadataPayload(String key, int type,
@@ -233,6 +240,7 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
                                   HoodieMetadataColumnStats columnStats,
                                   HoodieRecordIndexInfo recordIndexMetadata,
                                   HoodieSecondaryIndexInfo secondaryIndexMetadata,
+                                  HoodieBitmapIndexInfo bitmapIndexMetadata,
                                   boolean isDeletedRecord) {
     this.key = key;
     this.type = type;
@@ -241,6 +249,7 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
     this.columnStatMetadata = columnStats;
     this.recordIndexMetadata = recordIndexMetadata;
     this.secondaryIndexMetadata = secondaryIndexMetadata;
+    this.bitmapIndexMetadata = bitmapIndexMetadata;
     this.isDeletedRecord = isDeletedRecord;
   }
 
@@ -382,7 +391,7 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
     }
 
     HoodieMetadataRecord record = new HoodieMetadataRecord(key, type, filesystemMetadata, bloomFilterMetadata,
-        columnStatMetadata, recordIndexMetadata, secondaryIndexMetadata);
+        columnStatMetadata, recordIndexMetadata, secondaryIndexMetadata, bitmapIndexMetadata);
     return Option.of(record);
   }
 

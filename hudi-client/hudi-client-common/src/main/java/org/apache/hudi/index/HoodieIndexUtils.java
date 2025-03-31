@@ -79,6 +79,7 @@ import static org.apache.hudi.common.util.ConfigUtils.DEFAULT_HUDI_CONFIG_FOR_RE
 import static org.apache.hudi.common.util.ValidationUtils.checkArgument;
 import static org.apache.hudi.index.expression.HoodieExpressionIndex.EXPRESSION_OPTION;
 import static org.apache.hudi.index.expression.HoodieExpressionIndex.IDENTITY_TRANSFORM;
+import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX_PREFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_EXPRESSION_INDEX_PREFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX_PREFIX;
@@ -518,6 +519,29 @@ public class HoodieIndexUtils {
         .withSourceFields(new ArrayList<>(columns.keySet()))
         .withIndexOptions(options)
         .build();
+  }
+
+  static HoodieIndexDefinition getBitmapIndexDefinition(HoodieTableMetaClient metaClient, String userIndexName,
+                                                        String indexType, Map<String, Map<String, String>> columns,
+                                                        Map<String, String> options, Map<String, String> tableProperties) throws Exception {
+    String fullIndexName = PARTITION_NAME_BITMAP_INDEX_PREFIX + userIndexName;
+    if (indexExists(metaClient, fullIndexName)) {
+      throw new HoodieMetadataIndexException("Index already exists: " + userIndexName);
+    }
+    checkArgument(columns.size() == 1, "Only one column can be indexed for bitmap index at once.");
+
+    // TODO need to determine the data type supported for bitmap index
+    if (!isEligibleForSecondaryOrExpressionIndex(metaClient, indexType, tableProperties, columns)) {
+      throw new HoodieMetadataIndexException("Not eligible for indexing: " + indexType + ", indexName: " + userIndexName);
+    }
+
+    return HoodieIndexDefinition.newBuilder()
+            .withIndexName(fullIndexName)
+            .withIndexType(indexType)
+            .withIndexFunction(options.getOrDefault(EXPRESSION_OPTION, IDENTITY_TRANSFORM))
+            .withSourceFields(new ArrayList<>(columns.keySet()))
+            .withIndexOptions(options)
+            .build();
   }
 
   static boolean indexExists(HoodieTableMetaClient metaClient, String indexName) {

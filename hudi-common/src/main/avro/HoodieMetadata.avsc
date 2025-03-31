@@ -490,6 +490,25 @@
                 }
             ],
             "default" : null
+        },
+        {
+            "name": "BitmapIndexMetadata",
+            "doc": "Metadata Index that contains information about index keys, the corresponding bitmaps, and the corresponding record keys in the dataset",
+            "type": [
+                "null",
+                {
+                    "type": "record",
+                    "name": "HoodieBitmapIndexInfo",
+                    "fields": [
+                        {
+                            "name": "isDeleted",
+                            "type": "boolean",
+                            "doc": "True if this entry has been deleted"
+                        }
+                    ]
+                }
+            ],
+            "default" : null
         }
     ]
 }

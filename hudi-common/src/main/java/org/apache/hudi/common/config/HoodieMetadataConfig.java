@@ -427,6 +427,15 @@ public final class HoodieMetadataConfig extends HoodieConfig {
       .sinceVersion("1.0.1")
       .withDocumentation("Column for which secondary index will be built.");
 
+  public static final ConfigProperty<String> BITMAP_INDEX_NAME = HoodieIndexingConfig.INDEX_NAME;
+
+  public static final ConfigProperty<String> BITMAP_INDEX_COLUMN = ConfigProperty
+          .key(METADATA_PREFIX + ".index.bitmap.column")
+          .noDefaultValue()
+          .markAdvanced()
+          .sinceVersion("1.0.1")
+          .withDocumentation("Column for which secondary index will be built.");
+
   // Config to specify metadata index to delete
   public static final ConfigProperty<String> DROP_METADATA_INDEX = ConfigProperty
       .key(METADATA_PREFIX + ".index.drop")
@@ -639,6 +648,14 @@ public final class HoodieMetadataConfig extends HoodieConfig {
   }
 
   public String getSecondaryIndexName() {
+    return getString(SECONDARY_INDEX_NAME);
+  }
+
+  public String getBitmapIndexColumn() {
+    return getString(SECONDARY_INDEX_COLUMN);
+  }
+
+  public String getBitmapIndexName() {
     return getString(SECONDARY_INDEX_NAME);
   }
 
