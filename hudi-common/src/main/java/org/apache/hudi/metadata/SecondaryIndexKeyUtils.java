@@ -46,7 +46,7 @@ public class SecondaryIndexKeyUtils {
 
   // TODO refactor this
   public static String constructBitmapIndexKey(String partitionPath, String fileId, String bitmapKey) {
-    // <partition_path>$<file_id>$<bitmap_key>
+    // TODO change this to <indexed_col>$<bitmap_key>$<partition_path>$<file_id>
     return String.format("%s%s%s%s%s", partitionPath, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
             fileId, BITMAP_INDEX_RECORD_KEY_SEPARATOR, escapeSpecialChars(bitmapKey));
   }
