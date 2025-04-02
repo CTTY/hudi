@@ -159,20 +159,21 @@ public class BitmapIndexRecordGenerationUtils {
       bitmap.add(1L);
       bitmap.add(2L);
       bitmap.add(4L);
-      recordKeyToSecondaryKeyForCurrentFileSlice.forEach((recordKey, secondaryKey) -> {
+      recordKeyToSecondaryKeyForCurrentFileSlice.forEach((recordKey, bitmapKey) -> {
+        // TODO revisit this logic
         if (!recordKeyToSecondaryKeyForPreviousFileSlice.containsKey(recordKey)) {
-          records.add(createBitmapIndexRecord(recordKey, secondaryKey, indexDefinition.getIndexName(), bitmap));
+          records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
         } else {
           // delete previous entry and insert new value if secondaryKey is different
-          if (!recordKeyToSecondaryKeyForPreviousFileSlice.get(recordKey).equals(secondaryKey)) {
-            records.add(createBitmapIndexRecord(recordKey, recordKeyToSecondaryKeyForPreviousFileSlice.get(recordKey), indexDefinition.getIndexName(), bitmap));
-            records.add(createBitmapIndexRecord(recordKey, secondaryKey, indexDefinition.getIndexName(), bitmap));
+          if (!recordKeyToSecondaryKeyForPreviousFileSlice.get(recordKey).equals(bitmapKey)) {
+            records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
+            records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
           }
         }
       });
-      recordKeyToSecondaryKeyForPreviousFileSlice.forEach((recordKey, secondaryKey) -> {
+      recordKeyToSecondaryKeyForPreviousFileSlice.forEach((recordKey, bitmapKey) -> {
         if (!recordKeyToSecondaryKeyForCurrentFileSlice.containsKey(recordKey)) {
-          records.add(createBitmapIndexRecord(recordKey, secondaryKey, indexDefinition.getIndexName(), bitmap));
+          records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
         }
       });
       return records.iterator();
@@ -314,8 +315,12 @@ public class BitmapIndexRecordGenerationUtils {
             .build();
 
     Option<HoodieFileReader> baseFileReader = Option.empty();
+    String fileId;
     if (dataFilePath.isPresent()) {
       baseFileReader = Option.of(HoodieIOFactory.getIOFactory(metaClient.getStorage()).getReaderFactory(recordMerger.getRecordType()).getFileReader(getReaderConfigs(storageConf), dataFilePath.get()));
+      fileId = FSUtils.getFileId(dataFilePath.get().getName());
+    } else {
+      fileId = FSUtils.getFileId(new StoragePath(logFilePaths.get(0)).getName());
     }
     HoodieFileSliceReader fileSliceReader = new HoodieFileSliceReader(baseFileReader, mergedLogRecordScanner, tableSchema, metaClient.getTableConfig().getPreCombineField(), recordMerger,
             metaClient.getTableConfig().getProps(),
@@ -350,11 +355,11 @@ public class BitmapIndexRecordGenerationUtils {
           bitmap.add(record.getCurrentPosition());
           if (bitmapKey != null) {
             nextValidRecord = createBitmapIndexRecord(
-                    record.getRecordKey(tableSchema, HoodieRecord.RECORD_KEY_METADATA_FIELD),
+                    partition,
+                    fileId,
                     bitmapKey,
                     indexDefinition.getIndexName(),
-                    bitmap
-            );
+                    bitmap);
             return true;
           }
         }
@@ -377,8 +382,8 @@ public class BitmapIndexRecordGenerationUtils {
         try {
           if (record.toIndexedRecord(tableSchema, CollectionUtils.emptyProps()).isPresent()) {
             GenericRecord genericRecord = (GenericRecord) (record.toIndexedRecord(tableSchema, CollectionUtils.emptyProps()).get()).getData();
-            String secondaryKeyFields = String.join(".", indexDefinition.getSourceFields());
-            return HoodieAvroUtils.getNestedFieldValAsString(genericRecord, secondaryKeyFields, true, false);
+            String bitmapKeyFields = String.join(".", indexDefinition.getSourceFields());
+            return HoodieAvroUtils.getNestedFieldValAsString(genericRecord, bitmapKeyFields, true, false);
           }
         } catch (IOException e) {
           throw new RuntimeException("Failed to fetch records: " + e);

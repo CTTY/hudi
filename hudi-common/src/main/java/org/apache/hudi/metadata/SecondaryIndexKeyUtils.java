@@ -19,6 +19,7 @@
 package org.apache.hudi.metadata;
 
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
+import static org.apache.hudi.metadata.HoodieMetadataPayload.BITMAP_INDEX_RECORD_KEY_SEPARATOR;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.SECONDARY_INDEX_RECORD_KEY_SEPARATOR;
 
 public class SecondaryIndexKeyUtils {
@@ -43,8 +44,11 @@ public class SecondaryIndexKeyUtils {
     return escapeSpecialChars(secondaryKey) + SECONDARY_INDEX_RECORD_KEY_SEPARATOR + escapeSpecialChars(recordKey);
   }
 
-  public static String constructBitmapIndexKey(String fileGroupId, String bitmapKey) {
-    return fileGroupId + SECONDARY_INDEX_RECORD_KEY_SEPARATOR + escapeSpecialChars(bitmapKey);
+  // TODO refactor this
+  public static String constructBitmapIndexKey(String partitionPath, String fileId, String bitmapKey) {
+    // <partition_path>$<file_id>$<bitmap_key>
+    return String.format("%s%s%s%s%s", partitionPath, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
+            fileId, BITMAP_INDEX_RECORD_KEY_SEPARATOR, escapeSpecialChars(bitmapKey));
   }
 
   private static String escapeSpecialChars(String str) {
