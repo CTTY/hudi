@@ -2993,7 +2993,7 @@ public class HoodieTableMetadataUtil {
     return indexPartitionsToInit;
   }
 
-
+  // TODO this can also work for bitmap index, refactor this?
   public static String getSecondaryOrExpressionIndexName(Supplier<String> getConfiguredIndexName, String partitionNamePrefix, String indexedColumn) {
     String indexName = getConfiguredIndexName.get();
 

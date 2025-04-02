@@ -43,6 +43,10 @@ public class SecondaryIndexKeyUtils {
     return escapeSpecialChars(secondaryKey) + SECONDARY_INDEX_RECORD_KEY_SEPARATOR + escapeSpecialChars(recordKey);
   }
 
+  public static String constructBitmapIndexKey(String fileGroupId, String bitmapKey) {
+    return fileGroupId + SECONDARY_INDEX_RECORD_KEY_SEPARATOR + escapeSpecialChars(bitmapKey);
+  }
+
   private static String escapeSpecialChars(String str) {
     StringBuilder escaped = new StringBuilder();
     for (char c : str.toCharArray()) {

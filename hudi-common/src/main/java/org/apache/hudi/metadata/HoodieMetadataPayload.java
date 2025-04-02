@@ -33,6 +33,7 @@ import org.apache.hudi.common.model.HoodieKey;
 import org.apache.hudi.common.model.HoodieRecord;
 import org.apache.hudi.common.model.HoodieRecordGlobalLocation;
 import org.apache.hudi.common.model.HoodieRecordPayload;
+import org.apache.hudi.common.table.log.LogReaderUtils;
 import org.apache.hudi.common.table.timeline.TimelineUtils;
 import org.apache.hudi.common.util.Option;
 import org.apache.hudi.common.util.hash.ColumnIndexID;
@@ -49,6 +50,7 @@ import org.apache.hudi.util.Lazy;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.generic.IndexedRecord;
+import org.roaringbitmap.longlong.Roaring64NavigableMap;
 
 import javax.annotation.Nullable;
 
@@ -163,6 +165,12 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
   public static final String SECONDARY_INDEX_FIELD_IS_DELETED = FIELD_IS_DELETED;
 
   /**
+   * HoodieMetadata bitmap index field
+   */
+  public static final String BITMAP_INDEX_RECORD_KEY_SEPARATOR = SECONDARY_INDEX_RECORD_KEY_SEPARATOR;
+  public static final String BITMAP_INDEX_FIELD_BITMAP = "bitmap";
+
+  /**
    * NOTE: PLEASE READ CAREFULLY
    * <p>
    * In Avro 1.10 generated builders rely on {@code SpecificData.getForSchema} invocation that in turn
@@ -231,7 +239,7 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
   }
 
   protected HoodieMetadataPayload(String key, HoodieBitmapIndexInfo bitmapIndexMetadata) {
-    this(key, MetadataPartitionType.SECONDARY_INDEX.getRecordType(), null, null, null, null, null, bitmapIndexMetadata, false);
+    this(key, MetadataPartitionType.BITMAP_INDEX.getRecordType(), null, null, null, null, null, bitmapIndexMetadata, false);
   }
 
   protected HoodieMetadataPayload(String key, int type,
@@ -659,6 +667,19 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
 
   public boolean isSecondaryIndexDeleted() {
     return secondaryIndexMetadata.getIsDeleted();
+  }
+
+  public static HoodieRecord<HoodieMetadataPayload> createBitmapIndexRecord(String recordKey, String bitmapKey, String partitionPath, Roaring64NavigableMap bitmap) {
+    // the payload key is in the format of "secondaryKey$primaryKey"
+    // TODO should pass file group id in
+    HoodieKey key = new HoodieKey(SecondaryIndexKeyUtils.constructBitmapIndexKey(recordKey, bitmapKey), partitionPath);
+    try {
+      HoodieMetadataPayload payload = new HoodieMetadataPayload(key.getRecordKey(),
+              new HoodieBitmapIndexInfo(LogReaderUtils.encodePositions(bitmap)));
+      return new HoodieAvroRecord<>(key, payload);
+    } catch (IOException ioe) {
+      throw new HoodieMetadataException("Failed to create bitmap index record!", ioe);
+    }
   }
 
   /**

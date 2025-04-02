@@ -104,6 +104,7 @@ import static org.apache.hudi.common.table.timeline.HoodieInstant.State.REQUESTE
 import static org.apache.hudi.common.table.timeline.HoodieTimeline.COMMIT_ACTION;
 import static org.apache.hudi.common.table.timeline.InstantComparison.LESSER_THAN_OR_EQUALS;
 import static org.apache.hudi.common.table.timeline.InstantComparison.compareTimestamps;
+import static org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.readBitmapKeysFromFileSlices;
 import static org.apache.hudi.metadata.HoodieMetadataWriteUtils.createMetadataWriteConfig;
 import static org.apache.hudi.metadata.HoodieTableMetadata.METADATA_TABLE_NAME_SUFFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadata.SOLO_COMMIT_TIMESTAMP;
@@ -486,8 +487,7 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
               continue;
             }
             partitionName = bitmapIndexPartitionsToInit.iterator().next();
-            // TODO add initializeBitmapIndexPartition
-            fileGroupCountAndRecordsPair = initializeSecondaryIndexPartition(partitionName);
+            fileGroupCountAndRecordsPair = initializeBitmapIndexPartition(partitionName);
             break;
           default:
             throw new HoodieMetadataException(String.format("Unsupported MDT partition type: %s", partitionType));
@@ -672,6 +672,32 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
         RECORD_INDEX_AVERAGE_RECORD_SIZE, dataWriteConfig.getRecordIndexMinFileGroupCount(),
         dataWriteConfig.getRecordIndexMaxFileGroupCount(), dataWriteConfig.getRecordIndexGrowthFactor(),
         dataWriteConfig.getRecordIndexMaxFileGroupSizeBytes());
+
+    return Pair.of(fileGroupCount, records);
+  }
+
+  private Pair<Integer, HoodieData<HoodieRecord>> initializeBitmapIndexPartition(String indexName) throws IOException {
+    HoodieIndexDefinition indexDefinition = getIndexDefinition(indexName);
+    ValidationUtils.checkState(indexDefinition != null, "Bitmap Index definition is not present for index " + indexName);
+    List<Pair<String, FileSlice>> partitionFileSlicePairs = getPartitionFileSlicePairs();
+
+    // TODO use separate config for bitmap
+    int parallelism = Math.min(partitionFileSlicePairs.size(), dataWriteConfig.getMetadataConfig().getSecondaryIndexParallelism());
+    // TODO has separate logic for bitmap initialization
+    HoodieData<HoodieRecord> records = readBitmapKeysFromFileSlices(
+            engineContext,
+            partitionFileSlicePairs,
+            parallelism,
+            this.getClass().getSimpleName(),
+            dataMetaClient,
+            getEngineType(),
+            indexDefinition);
+
+    // Initialize the file groups - using the same estimation logic as that of record index
+    final int fileGroupCount = HoodieTableMetadataUtil.estimateFileGroupCount(RECORD_INDEX, records.count(),
+            RECORD_INDEX_AVERAGE_RECORD_SIZE, dataWriteConfig.getRecordIndexMinFileGroupCount(),
+            dataWriteConfig.getRecordIndexMaxFileGroupCount(), dataWriteConfig.getRecordIndexGrowthFactor(),
+            dataWriteConfig.getRecordIndexMaxFileGroupSizeBytes());
 
     return Pair.of(fileGroupCount, records);
   }

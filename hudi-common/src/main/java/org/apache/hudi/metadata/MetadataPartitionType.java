@@ -48,6 +48,7 @@ import static org.apache.hudi.avro.HoodieAvroUtils.wrapValueIntoAvro;
 import static org.apache.hudi.common.util.TypeUtils.unsafeCast;
 import static org.apache.hudi.common.util.ValidationUtils.checkArgument;
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
+import static org.apache.hudi.metadata.HoodieMetadataPayload.BITMAP_INDEX_FIELD_BITMAP;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.BLOOM_FILTER_FIELD_BLOOM_FILTER;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.BLOOM_FILTER_FIELD_IS_DELETED;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.BLOOM_FILTER_FIELD_TIMESTAMP;
@@ -250,8 +251,7 @@ public enum MetadataPartitionType {
     public void constructMetadataPayload(HoodieMetadataPayload payload, GenericRecord record) {
       GenericRecord bitmapIndexRecord = getNestedFieldValue(record, SCHEMA_FIELD_ID_BITMAP_INDEX);
       checkState(bitmapIndexRecord != null, "Valid SecondaryIndexMetadata record expected for type: " + MetadataPartitionType.BITMAP_INDEX.getRecordType());
-      // TODO revisit the isDeleted logic for bitmap index
-      payload.bitmapIndexMetadata = new HoodieBitmapIndexInfo((Boolean) bitmapIndexRecord.get(SECONDARY_INDEX_FIELD_IS_DELETED));
+      payload.bitmapIndexMetadata = new HoodieBitmapIndexInfo((String) bitmapIndexRecord.get(BITMAP_INDEX_FIELD_BITMAP));
     }
 
     @Override

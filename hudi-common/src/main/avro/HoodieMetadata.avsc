@@ -493,7 +493,7 @@
         },
         {
             "name": "BitmapIndexMetadata",
-            "doc": "Metadata Index that contains information about index keys, the corresponding bitmaps, and the corresponding record keys in the dataset",
+            "doc": "Metadata Index that contains information about the corresponding bitmaps",
             "type": [
                 "null",
                 {
@@ -501,9 +501,9 @@
                     "name": "HoodieBitmapIndexInfo",
                     "fields": [
                         {
-                            "name": "isDeleted",
-                            "type": "boolean",
-                            "doc": "True if this entry has been deleted"
+                            "name": "bitmap",
+                            "type": "string",
+                            "doc": "Serialized bitmap corresponding to the bitmap metadata key"
                         }
                     ]
                 }
