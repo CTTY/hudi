@@ -51,6 +51,15 @@ public class SecondaryIndexKeyUtils {
             fileId, BITMAP_INDEX_RECORD_KEY_SEPARATOR, escapeSpecialChars(bitmapKey));
   }
 
+  public static String constructBitmapIndexKey1(String columnName, String columnValue, String partitionPath, String fileId) {
+    // TODO change this to <indexed_col>$<bitmap_key>$<partition_path>$<file_id>
+    return String.format("%s%s%s%s%s%s%s",
+            escapeSpecialChars(columnName), BITMAP_INDEX_RECORD_KEY_SEPARATOR,
+            escapeSpecialChars(columnValue), BITMAP_INDEX_RECORD_KEY_SEPARATOR,
+            partitionPath, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
+            fileId);
+  }
+
   private static String escapeSpecialChars(String str) {
     StringBuilder escaped = new StringBuilder();
     for (char c : str.toCharArray()) {

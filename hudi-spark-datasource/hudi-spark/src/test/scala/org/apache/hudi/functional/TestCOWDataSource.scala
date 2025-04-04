@@ -102,6 +102,24 @@ class TestCOWDataSource extends HoodieSparkClientTestBase with ScalaAssertionSup
   }
 
   @Test
+  def shawn(): Unit = {
+    val (writeOpts, readOpts) = getWriterReaderOpts()
+
+    // Insert Operation
+    val records = recordsToStrings(dataGen.generateInserts("000", 100)).asScala.toList
+    val inputDF = spark.read.json(spark.sparkContext.parallelize(records, 2))
+    inputDF.write.format("hudi")
+      .options(writeOpts)
+      .option(DataSourceWriteOptions.OPERATION.key, DataSourceWriteOptions.INSERT_OPERATION_OPT_VAL)
+      .mode(SaveMode.Overwrite)
+      .save(basePath)
+
+    println("shawn: printing metadata")
+    spark.sql(s"select * from hudi_metadata('$basePath')").show(60)
+    println("shawn: printed metadata")
+  }
+
+  @Test
   def testShortNameStorage(): Unit = {
     val (writeOpts, readOpts) = getWriterReaderOpts()
 

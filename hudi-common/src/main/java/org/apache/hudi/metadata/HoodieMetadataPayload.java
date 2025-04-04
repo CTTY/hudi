@@ -515,6 +515,14 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
             MetadataPartitionType.COLUMN_STATS.getPartitionPath(), MetadataPartitionType.COLUMN_STATS.getRecordType()));
   }
 
+  public static Stream<HoodieRecord> createBitmapRecords(String partitionName,
+                                                              Collection<HoodieColumnRangeMetadata<Comparable>> columnRangeMetadataList,
+                                                              boolean isDeleted) {
+    return columnRangeMetadataList.stream().map(
+            columnRangeMetadata -> createColumnStatsRecord(partitionName, columnRangeMetadata, isDeleted,
+                    MetadataPartitionType.COLUMN_STATS.getPartitionPath(), MetadataPartitionType.COLUMN_STATS.getRecordType()));
+  }
+
   public static Stream<HoodieRecord> createColumnStatsRecords(String partitionName,
                                                               Collection<HoodieColumnRangeMetadata<Comparable>> columnRangeMetadataList,
                                                               boolean isDeleted,

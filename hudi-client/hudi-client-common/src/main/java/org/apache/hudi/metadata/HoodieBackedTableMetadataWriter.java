@@ -109,13 +109,13 @@ import static org.apache.hudi.metadata.HoodieMetadataWriteUtils.createMetadataWr
 import static org.apache.hudi.metadata.HoodieTableMetadata.METADATA_TABLE_NAME_SUFFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadata.SOLO_COMMIT_TIMESTAMP;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX_PREFIX;
-import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getBitmapIndexPartitionsToInit;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getExpressionIndexPartitionsToInit;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getInflightMetadataPartitions;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getPartitionLatestFileSlicesIncludingInflight;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getProjectedSchemaForExpressionIndex;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getSecondaryIndexPartitionsToInit;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.readRecordKeysFromBaseFiles;
+import static org.apache.hudi.metadata.MetadataPartitionType.BITMAP_INDEX;
 import static org.apache.hudi.metadata.MetadataPartitionType.BLOOM_FILTERS;
 import static org.apache.hudi.metadata.MetadataPartitionType.COLUMN_STATS;
 import static org.apache.hudi.metadata.MetadataPartitionType.FILES;
@@ -479,15 +479,10 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
             fileGroupCountAndRecordsPair = initializeSecondaryIndexPartition(partitionName);
             break;
           case BITMAP_INDEX:
-            Set<String> bitmapIndexPartitionsToInit = getBitmapIndexPartitionsToInit(partitionType, dataWriteConfig.getMetadataConfig(), dataMetaClient);
-            if (bitmapIndexPartitionsToInit.size() != 1) {
-              if (bitmapIndexPartitionsToInit.size() > 1) {
-                LOG.warn("Skipping bitmap index initialization as only one bitmap index bootstrap at a time is supported for now. Provided: {}", bitmapIndexPartitionsToInit);
-              }
-              continue;
-            }
-            partitionName = bitmapIndexPartitionsToInit.iterator().next();
-            fileGroupCountAndRecordsPair = initializeBitmapIndexPartition(partitionName);
+            partitionName = BITMAP_INDEX.getPartitionPath();
+            Pair<List<String>, Pair<Integer, HoodieData<HoodieRecord>>> bitmapColumnsAndRecord = initializeBitmapPartition(partitionToFilesMap);
+            columnsToIndex = bitmapColumnsAndRecord.getKey();
+            fileGroupCountAndRecordsPair = bitmapColumnsAndRecord.getValue();
             break;
           default:
             throw new HoodieMetadataException(String.format("Unsupported MDT partition type: %s", partitionType));
@@ -676,30 +671,27 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
     return Pair.of(fileGroupCount, records);
   }
 
-  private Pair<Integer, HoodieData<HoodieRecord>> initializeBitmapIndexPartition(String indexName) throws IOException {
-    HoodieIndexDefinition indexDefinition = getIndexDefinition(indexName);
-    ValidationUtils.checkState(indexDefinition != null, "Bitmap Index definition is not present for index " + indexName);
-    List<Pair<String, FileSlice>> partitionFileSlicePairs = getPartitionFileSlicePairs();
+  private Pair<List<String>, Pair<Integer, HoodieData<HoodieRecord>>> initializeBitmapPartition(Map<String, Map<String, Long>> partitionToFilesMap) {
+    // TODO add the same config for bitmap index
+    final int fileGroupCount = dataWriteConfig.getMetadataConfig().getColumnStatsIndexFileGroupCount();
+    // Find the columns to index
+    final List<String> columnsToIndex = new ArrayList<>(dataWriteConfig.getMetadataConfig().getColumnsEnabledForBitmapIndex());
 
-    // TODO use separate config for bitmap
-    int parallelism = Math.min(partitionFileSlicePairs.size(), dataWriteConfig.getMetadataConfig().getSecondaryIndexParallelism());
-    // TODO has separate logic for bitmap initialization
-    HoodieData<HoodieRecord> records = readBitmapKeysFromFileSlices(
-            engineContext,
-            partitionFileSlicePairs,
-            parallelism,
-            this.getClass().getSimpleName(),
-            dataMetaClient,
-            getEngineType(),
-            indexDefinition);
+    if (!dataWriteConfig.getMetadataConfig().isBitmapIndexEnabled() || columnsToIndex.isEmpty() || partitionToFilesMap.isEmpty()) {
+      // do not initialize bitmap index
+      return Pair.of(Collections.emptyList(), Pair.of(fileGroupCount, engineContext.emptyHoodieData()));
+    }
 
-    // Initialize the file groups - using the same estimation logic as that of record index
-    final int fileGroupCount = HoodieTableMetadataUtil.estimateFileGroupCount(RECORD_INDEX, records.count(),
-            RECORD_INDEX_AVERAGE_RECORD_SIZE, dataWriteConfig.getRecordIndexMinFileGroupCount(),
-            dataWriteConfig.getRecordIndexMaxFileGroupCount(), dataWriteConfig.getRecordIndexGrowthFactor(),
-            dataWriteConfig.getRecordIndexMaxFileGroupSizeBytes());
+    LOG.info("Indexing {} columns for bitmap index", columnsToIndex.size());
 
-    return Pair.of(fileGroupCount, records);
+    // during initialization, we need stats for base and log files.
+    HoodieData<HoodieRecord> records = HoodieTableMetadataUtil.convertFilesToBitmapRecords(
+            engineContext, Collections.emptyMap(), partitionToFilesMap, dataMetaClient, dataWriteConfig.getMetadataConfig(),
+            dataWriteConfig.getColumnStatsIndexParallelism(),
+            dataWriteConfig.getMetadataConfig().getMaxReaderBufferSize(),
+            columnsToIndex, getEngineType());
+
+    return Pair.of(columnsToIndex, Pair.of(fileGroupCount, records));
   }
 
   private List<Pair<String, FileSlice>> getPartitionFileSlicePairs() throws IOException {

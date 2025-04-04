@@ -45,6 +45,10 @@ import java.util.stream.Collectors;
 
 import static org.apache.hudi.avro.HoodieAvroUtils.unwrapAvroValueWrapper;
 import static org.apache.hudi.avro.HoodieAvroUtils.wrapValueIntoAvro;
+// TODO refactor these as metadata config's functions
+import static org.apache.hudi.common.config.HoodieMetadataConfig.BITMAP_INDEX_ENABLE_PROP;
+import static org.apache.hudi.common.config.HoodieMetadataConfig.BITMAP_INDEX_NAME;
+import static org.apache.hudi.common.util.ConfigUtils.getBooleanWithAltKeys;
 import static org.apache.hudi.common.util.TypeUtils.unsafeCast;
 import static org.apache.hudi.common.util.ValidationUtils.checkArgument;
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
@@ -231,33 +235,17 @@ public enum MetadataPartitionType {
       return metaClient.getIndexMetadata().get().getIndexDefinitions().get(indexName).getIndexName();
     }
   },
-  BITMAP_INDEX(HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX_PREFIX, "bitmap-index-", 8) {
+  BITMAP_INDEX(PARTITION_NAME_BITMAP_INDEX, "bitmap-index-", 8) {
     @Override
     public boolean isMetadataPartitionEnabled(TypedProperties writeConfig) {
-      // TODO(shawn): add bitmap index props
-      return getBooleanWithAltKeys(writeConfig, SECONDARY_INDEX_ENABLE_PROP);
-    }
-
-    @Override
-    public boolean isMetadataPartitionAvailable(HoodieTableMetaClient metaClient) {
-      if (metaClient.getIndexMetadata().isPresent()) {
-        return metaClient.getIndexMetadata().get().getIndexDefinitions().values().stream()
-                .anyMatch(indexDef -> indexDef.getIndexName().startsWith(HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX_PREFIX));
-      }
-      return false;
+      return getBooleanWithAltKeys(writeConfig, BITMAP_INDEX_ENABLE_PROP);
     }
 
     @Override
     public void constructMetadataPayload(HoodieMetadataPayload payload, GenericRecord record) {
       GenericRecord bitmapIndexRecord = getNestedFieldValue(record, SCHEMA_FIELD_ID_BITMAP_INDEX);
-      checkState(bitmapIndexRecord != null, "Valid SecondaryIndexMetadata record expected for type: " + MetadataPartitionType.BITMAP_INDEX.getRecordType());
+      checkState(bitmapIndexRecord != null, "Valid BitmapIndexMetadata record expected for type: " + MetadataPartitionType.BITMAP_INDEX.getRecordType());
       payload.bitmapIndexMetadata = new HoodieBitmapIndexInfo((String) bitmapIndexRecord.get(BITMAP_INDEX_FIELD_BITMAP));
-    }
-
-    @Override
-    public String getPartitionPath(HoodieTableMetaClient metaClient, String indexName) {
-      checkArgument(metaClient.getIndexMetadata().isPresent(), "Index definition is not present for index: " + indexName);
-      return metaClient.getIndexMetadata().get().getIndexDefinitions().get(indexName).getIndexName();
     }
   },
   PARTITION_STATS(HoodieTableMetadataUtil.PARTITION_NAME_PARTITION_STATS, "partition-stats-", 6) {
@@ -513,13 +501,17 @@ public enum MetadataPartitionType {
   }
 
   public static boolean isNewBitmapIndexDefinitionRequired(HoodieMetadataConfig metadataConfig, HoodieTableMetaClient dataMetaClient) {
-    String bitmapIndexColumn = metadataConfig.getBitmapIndexColumn();
-    if (StringUtils.isNullOrEmpty(bitmapIndexColumn)) {
+    List<String> bitmapIndexColumns = metadataConfig.getColumnsEnabledForBitmapIndex();
+    if (bitmapIndexColumns.isEmpty()) {
       return false;
     }
     // check the index definition already exists or not for this column
-    List<HoodieIndexDefinition> indexDefinitions = getIndexDefinitions(bitmapIndexColumn, PARTITION_NAME_BITMAP_INDEX, dataMetaClient);
-    return indexDefinitions.isEmpty();
+    for (String column : bitmapIndexColumns) {
+      if (!isIndexDefinitionPresentForColumn(column, BITMAP_INDEX.partitionPath, dataMetaClient)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

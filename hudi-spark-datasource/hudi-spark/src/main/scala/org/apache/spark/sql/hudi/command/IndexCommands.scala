@@ -68,14 +68,14 @@ case class CreateIndexCommand(table: CatalogTable,
         "Input columns should match configured record key columns: " + metaClient.getTableConfig.getRecordKeyFieldProp)
       new HoodieSparkIndexClient(sparkSession).create(metaClient, indexName, HoodieTableMetadataUtil.PARTITION_NAME_RECORD_INDEX, columnsMap, options.asJava, table.properties.asJava)
     } else if (StringUtils.isNullOrEmpty(indexType)) {
-      // TODO need to have create index command parse index type
       val columnNames = columnsMap.keySet().asScala.toSet
-//      val derivedIndexType: String = if (CreateIndexCommand.matchesRecordKeys(columnNames, metaClient.getTableConfig)) {
-//        HoodieTableMetadataUtil.PARTITION_NAME_RECORD_INDEX
-//      } else {
-//        HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX
-//      }
-      val derivedIndexType = HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX
+      val derivedIndexType: String = if (CreateIndexCommand.matchesRecordKeys(columnNames, metaClient.getTableConfig)) {
+        HoodieTableMetadataUtil.PARTITION_NAME_RECORD_INDEX
+      } else {
+        HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX
+      }
+      // TODO investigate how to use this codepath
+      //      val derivedIndexType = HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX
       new HoodieSparkIndexClient(sparkSession).create(metaClient, indexName, derivedIndexType, columnsMap, options.asJava, table.properties.asJava)
     } else {
       throw new HoodieIndexException(String.format("%s is not supported", indexType))

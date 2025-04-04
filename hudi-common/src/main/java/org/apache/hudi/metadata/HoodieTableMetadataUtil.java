@@ -174,12 +174,13 @@ import static org.apache.hudi.common.util.ValidationUtils.checkArgument;
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
 import static org.apache.hudi.index.expression.HoodieExpressionIndex.EXPRESSION_OPTION;
 import static org.apache.hudi.index.expression.HoodieExpressionIndex.IDENTITY_TRANSFORM;
+import static org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.convertMetadataToBitmapIndexRecords;
+import static org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.createBitmapFromFile;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.COLUMN_STATS_FIELD_IS_TIGHT_BOUND;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.RECORD_INDEX_MISSING_FILEINDEX_FALLBACK;
 import static org.apache.hudi.metadata.HoodieTableMetadata.EMPTY_PARTITION_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadata.NON_PARTITIONED_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadata.SOLO_COMMIT_TIMESTAMP;
-import static org.apache.hudi.metadata.MetadataPartitionType.isNewBitmapIndexDefinitionRequired;
 import static org.apache.hudi.metadata.MetadataPartitionType.isNewExpressionIndexDefinitionRequired;
 import static org.apache.hudi.metadata.MetadataPartitionType.isNewSecondaryIndexDefinitionRequired;
 
@@ -200,7 +201,6 @@ public class HoodieTableMetadataUtil {
   public static final String PARTITION_NAME_SECONDARY_INDEX = "secondary_index";
   public static final String PARTITION_NAME_SECONDARY_INDEX_PREFIX = "secondary_index_";
   public static final String PARTITION_NAME_BITMAP_INDEX = "bitmap_index";
-  public static final String PARTITION_NAME_BITMAP_INDEX_PREFIX = "bitmap_index_";
 
   private static final Set<Schema.Type> SUPPORTED_TYPES_PARTITION_STATS = new HashSet<>(Arrays.asList(
       Schema.Type.INT, Schema.Type.LONG, Schema.Type.FLOAT, Schema.Type.DOUBLE, Schema.Type.STRING, Schema.Type.BOOLEAN, Schema.Type.NULL, Schema.Type.BYTES));
@@ -440,6 +440,9 @@ public class HoodieTableMetadataUtil {
     if (enabledPartitionTypes.contains(MetadataPartitionType.RECORD_INDEX.getPartitionPath())) {
       partitionToRecordsMap.put(MetadataPartitionType.RECORD_INDEX.getPartitionPath(), convertMetadataToRecordIndexRecords(context, commitMetadata, metadataConfig,
           dataMetaClient, writesFileIdEncoding, instantTime, engineType));
+    }
+    if (enabledPartitionTypes.contains(MetadataPartitionType.BITMAP_INDEX.getPartitionPath())) {
+      partitionToRecordsMap.put(MetadataPartitionType.BITMAP_INDEX.getPartitionPath(), convertMetadataToBitmapIndexRecords(commitMetadata, context, dataMetaClient, metadataConfig, engineType));
     }
     return partitionToRecordsMap;
   }
@@ -1317,6 +1320,43 @@ public class HoodieTableMetadataUtil {
       final String filename = partitionFileFlagTuple.f1;
       final boolean isDeleted = partitionFileFlagTuple.f2;
       return getColumnStatsRecords(partitionPath, filename, dataMetaClient, columnsToIndex, isDeleted, maxReaderBufferSize).iterator();
+    });
+  }
+
+  /**
+   * Convert added and deleted action metadata to column stats index records.
+   */
+  public static HoodieData<HoodieRecord> convertFilesToBitmapRecords(HoodieEngineContext engineContext,
+                                                                      Map<String, List<String>> partitionToDeletedFiles,
+                                                                      Map<String, Map<String, Long>> partitionToAppendedFiles,
+                                                                      HoodieTableMetaClient dataMetaClient,
+                                                                      HoodieMetadataConfig metadataConfig,
+                                                                      int bitmapIndexParallelism,
+                                                                      int maxReaderBufferSize,
+                                                                      List<String> columnsToIndex,
+                                                                      EngineType engineType) {
+    if ((partitionToAppendedFiles.isEmpty() && partitionToDeletedFiles.isEmpty())) {
+      return engineContext.emptyHoodieData();
+    }
+    LOG.info("Indexing {} columns for column stats index", columnsToIndex.size());
+
+    // Create the tuple (partition, filename, isDeleted) to handle both deletes and appends
+    final List<Tuple3<String, String, Boolean>> partitionFileFlagTupleList = fetchPartitionFileInfoTriplets(partitionToDeletedFiles, partitionToAppendedFiles);
+
+    Schema tableSchema;
+    try {
+      tableSchema = tryResolveSchemaForTable(dataMetaClient).get();
+    } catch (Exception e) {
+      throw new HoodieException("Failed to get latest schema for " + dataMetaClient.getBasePath(), e);
+    }
+
+    // Create records MDT
+    int parallelism = Math.max(Math.min(partitionFileFlagTupleList.size(), bitmapIndexParallelism), 1);
+    return engineContext.parallelize(partitionFileFlagTupleList, parallelism).flatMap(partitionFileFlagTuple -> {
+      final String partitionPath = partitionFileFlagTuple.f0;
+      final String filename = partitionFileFlagTuple.f1;
+      final boolean isDeleted = partitionFileFlagTuple.f2;
+      return createBitmapFromFile(dataMetaClient, partitionPath, filename, columnsToIndex, tableSchema, maxReaderBufferSize, engineType).iterator();
     });
   }
 
@@ -2929,19 +2969,6 @@ public class HoodieTableMetadataUtil {
     );
   }
 
-  public static Set<String> getBitmapIndexPartitionsToInit(MetadataPartitionType partitionType, HoodieMetadataConfig metadataConfig, HoodieTableMetaClient dataMetaClient) {
-    return getIndexPartitionsToInit(
-            partitionType,
-            metadataConfig,
-            dataMetaClient,
-            () -> isNewBitmapIndexDefinitionRequired(metadataConfig, dataMetaClient),
-            metadataConfig::getBitmapIndexColumn,
-            metadataConfig::getBitmapIndexName,
-            PARTITION_NAME_BITMAP_INDEX_PREFIX,
-            PARTITION_NAME_BITMAP_INDEX
-    );
-  }
-
   /**
    * Fetches uninitialized index partitions for the given partition type.
    * If no such partitions are found and a new index definition is required,
@@ -2993,7 +3020,6 @@ public class HoodieTableMetadataUtil {
     return indexPartitionsToInit;
   }
 
-  // TODO this can also work for bitmap index, refactor this?
   public static String getSecondaryOrExpressionIndexName(Supplier<String> getConfiguredIndexName, String partitionNamePrefix, String indexedColumn) {
     String indexName = getConfiguredIndexName.get();
 

@@ -97,8 +97,6 @@ public class HoodieSparkIndexClient extends BaseHoodieIndexClient {
     if (indexType.equals(PARTITION_NAME_SECONDARY_INDEX) || indexType.equals(PARTITION_NAME_BLOOM_FILTERS)
         || indexType.equals(PARTITION_NAME_COLUMN_STATS)) {
       createExpressionOrSecondaryIndex(metaClient, userIndexName, indexType, columns, options, tableProperties);
-    } else if (indexType.equals(PARTITION_NAME_BITMAP_INDEX)) {
-      createBitmapIndex(metaClient, userIndexName, indexType, columns, options, tableProperties);
     } else {
       createRecordIndex(metaClient, userIndexName, indexType);
     }
@@ -159,38 +157,6 @@ public class HoodieSparkIndexClient extends BaseHoodieIndexClient {
     Option<HoodieIndexDefinition> expressionIndexDefinitionOpt = Option.ofNullable(indexDefinition);
     try (SparkRDDWriteClient writeClient = getWriteClient(metaClient, expressionIndexDefinitionOpt, Option.of(indexType))) {
       MetadataPartitionType partitionType = indexType.equals(PARTITION_NAME_SECONDARY_INDEX) ? MetadataPartitionType.SECONDARY_INDEX : MetadataPartitionType.EXPRESSION_INDEX;
-      // generate index plan
-      Option<String> indexInstantTime = doSchedule(writeClient, metaClient, indexDefinition.getIndexName(), partitionType);
-      if (indexInstantTime.isPresent()) {
-        // build index
-        writeClient.index(indexInstantTime.get());
-      } else {
-        throw new HoodieMetadataIndexException("Scheduling of index action did not return any instant.");
-      }
-    } catch (Throwable t) {
-      LOG.warn("Error while creating index: {}. So drop it.", indexDefinition.getIndexName(), t);
-      drop(metaClient, indexDefinition.getIndexName(), Option.ofNullable(indexDefinition));
-      throw t;
-    }
-  }
-
-  private void createBitmapIndex(HoodieTableMetaClient metaClient, String userIndexName, String indexType,
-                                 Map<String, Map<String, String>> columns, Map<String, String> options,
-                                 Map<String, String> tableProperties) throws Exception {
-    HoodieIndexDefinition indexDefinition = HoodieIndexUtils.getBitmapIndexDefinition(metaClient, userIndexName, indexType, columns, options, tableProperties);
-    if (!metaClient.getTableConfig().getRelativeIndexDefinitionPath().isPresent()
-            || !metaClient.getIndexMetadata().isPresent()
-            || !metaClient.getIndexMetadata().get().getIndexDefinitions().containsKey(indexDefinition.getIndexName())) {
-      LOG.info("Index definition is not present. Registering the index first");
-      register(metaClient, indexDefinition);
-    }
-
-    ValidationUtils.checkState(metaClient.getIndexMetadata().isPresent(), "Index definition is not present");
-
-    LOG.info("Creating index {} of using {}", indexDefinition.getIndexName(), indexType);
-    Option<HoodieIndexDefinition> expressionIndexDefinitionOpt = Option.ofNullable(indexDefinition);
-    try (SparkRDDWriteClient writeClient = getWriteClient(metaClient, expressionIndexDefinitionOpt, Option.of(indexType))) {
-      MetadataPartitionType partitionType = MetadataPartitionType.BITMAP_INDEX;
       // generate index plan
       Option<String> indexInstantTime = doSchedule(writeClient, metaClient, indexDefinition.getIndexName(), partitionType);
       if (indexInstantTime.isPresent()) {

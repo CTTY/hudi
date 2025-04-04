@@ -427,14 +427,26 @@ public final class HoodieMetadataConfig extends HoodieConfig {
       .sinceVersion("1.0.1")
       .withDocumentation("Column for which secondary index will be built.");
 
+  public static final ConfigProperty<Boolean> BITMAP_INDEX_ENABLE_PROP = ConfigProperty
+          .key(METADATA_PREFIX + ".index.bitmap.enable")
+          .defaultValue(false)
+          .sinceVersion("1.1.0");
+
   public static final ConfigProperty<String> BITMAP_INDEX_NAME = HoodieIndexingConfig.INDEX_NAME;
 
-  public static final ConfigProperty<String> BITMAP_INDEX_COLUMN = ConfigProperty
-          .key(METADATA_PREFIX + ".index.bitmap.column")
+  public static final ConfigProperty<String> BITMAP_INDEX_FOR_COLUMNS = ConfigProperty
+          .key(METADATA_PREFIX + ".index.bitmap.column.list")
           .noDefaultValue()
           .markAdvanced()
-          .sinceVersion("1.0.1")
+          .sinceVersion("1.1.0")
           .withDocumentation("Column for which secondary index will be built.");
+
+  public static final ConfigProperty<Integer> BITMAP_INDEX_PARALLELISM = ConfigProperty
+          .key(METADATA_PREFIX + ".index.bitmap.parallelism")
+          .defaultValue(200)
+          .markAdvanced()
+          .sinceVersion("1.1.0")
+          .withDocumentation("Parallelism to use, when generating column stats index.");
 
   // Config to specify metadata index to delete
   public static final ConfigProperty<String> DROP_METADATA_INDEX = ConfigProperty
@@ -482,6 +494,14 @@ public final class HoodieMetadataConfig extends HoodieConfig {
     return StringUtils.split(getString(COLUMN_STATS_INDEX_FOR_COLUMNS), CONFIG_VALUES_DELIMITER);
   }
 
+  public boolean isBitmapIndexEnabled() {
+    return getBooleanOrDefault(BITMAP_INDEX_ENABLE_PROP);
+  }
+
+  public List<String> getColumnsEnabledForBitmapIndex() {
+    return StringUtils.split(getString(BITMAP_INDEX_FOR_COLUMNS), CONFIG_VALUES_DELIMITER);
+  }
+
   public Integer maxColumnsToIndexForColStats() {
     return getIntOrDefault(COLUMN_STATS_INDEX_MAX_COLUMNS);
   }
@@ -512,6 +532,10 @@ public final class HoodieMetadataConfig extends HoodieConfig {
 
   public int getColumnStatsIndexParallelism() {
     return getIntOrDefault(COLUMN_STATS_INDEX_PARALLELISM);
+  }
+
+  public int getBitmapIndexParallelism() {
+    return getIntOrDefault(BITMAP_INDEX_PARALLELISM);
   }
 
   public int getIndexingCheckTimeoutSeconds() {
@@ -648,14 +672,6 @@ public final class HoodieMetadataConfig extends HoodieConfig {
   }
 
   public String getSecondaryIndexName() {
-    return getString(SECONDARY_INDEX_NAME);
-  }
-
-  public String getBitmapIndexColumn() {
-    return getString(SECONDARY_INDEX_COLUMN);
-  }
-
-  public String getBitmapIndexName() {
     return getString(SECONDARY_INDEX_NAME);
   }
 
