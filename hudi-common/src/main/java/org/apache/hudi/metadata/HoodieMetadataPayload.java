@@ -444,6 +444,14 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
     return Option.of(columnStatMetadata);
   }
 
+  public Option<HoodieBitmapIndexInfo> getBitmapIndexMetadata() {
+    if (bitmapIndexMetadata == null) {
+      return Option.empty();
+    }
+
+    return Option.of(bitmapIndexMetadata);
+  }
+
   /**
    * Returns the files added as part of this record.
    */

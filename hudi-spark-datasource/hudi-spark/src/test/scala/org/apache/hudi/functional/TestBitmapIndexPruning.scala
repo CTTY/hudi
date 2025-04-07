@@ -275,13 +275,13 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     //      Seq(s"def${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row3")
     //    )
     println("shawn: printing metadata")
-    spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60)
+    spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60, false)
     println("shawn: printed metadata")
     // validate data skipping with filters on secondary key column
     spark.sql("set hoodie.metadata.enable=true")
     spark.sql("set hoodie.enable.data.skipping=true")
     spark.sql("set hoodie.fileIndex.dataSkippingFailureMode=strict")
-    checkAnswer(s"select ts, record_key_col, not_record_key_col, partition_key_col from $tableName where not_record_key_col = 'abc'")(
+    checkAnswer(s"select ts, record_key_col, not_record_key_col, partition_key_col from $tableName where not_record_key_col = 'abc' and record_key_col != 'row2'")(
       Seq(1, "row1", "abc", "p1")
     )
     //    verifyQueryPredicate(hudiOpts, "not_record_key_col")

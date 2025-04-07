@@ -50,6 +50,7 @@ import org.apache.hudi.common.util.CollectionUtils;
 import org.apache.hudi.common.util.FileIOUtils;
 import org.apache.hudi.common.util.HoodieRecordUtils;
 import org.apache.hudi.common.util.Option;
+import org.apache.hudi.common.util.StringUtils;
 import org.apache.hudi.common.util.VisibleForTesting;
 import org.apache.hudi.common.util.collection.ClosableIterator;
 import org.apache.hudi.common.util.collection.Pair;
@@ -85,7 +86,6 @@ import static org.apache.hudi.common.config.HoodieCommonConfig.DISK_MAP_BITCASK_
 import static org.apache.hudi.common.config.HoodieCommonConfig.MAX_MEMORY_FOR_COMPACTION;
 import static org.apache.hudi.common.config.HoodieCommonConfig.SPILLABLE_DISK_MAP_TYPE;
 import static org.apache.hudi.common.util.ConfigUtils.getReaderConfigs;
-import static org.apache.hudi.common.util.StringUtils.isNullOrEmpty;
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.BITMAP_INDEX_RECORD_KEY_SEPARATOR;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.createBitmapIndexRecord;
@@ -431,7 +431,7 @@ public class BitmapIndexRecordGenerationUtils {
     HoodieFileFormat baseFileFormat = metaClient.getTableConfig().getBaseFileFormat();
     Schema tableSchema;
     try {
-      // TODO revisit this schema logic... something is off
+      // TODO revisit this schema logic... why tryResolveSchema doesn't work?
       tableSchema = metaClient.getTableConfig().getTableCreateSchema().get();
     } catch (Exception e) {
       throw new HoodieException("Failed to get latest schema for " + metaClient.getBasePath(), e);
@@ -519,10 +519,7 @@ public class BitmapIndexRecordGenerationUtils {
     return toBitmap.keySet().stream().map(mapKey -> {
       // the payload key is in the format of "partitionPath_fileId$bitmapKey"
       HoodieKey hoodieKey = new HoodieKey(
-              String.format("%s%s%s%s%s",
-                      mapKey, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
-                      partitionPath, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
-                      fileId),
+              constructBitmapKey(mapKey, partitionPath, fileId),
               PARTITION_NAME_BITMAP_INDEX);
       try {
         HoodieMetadataPayload payload = new HoodieMetadataPayload(hoodieKey.getRecordKey(),
@@ -561,6 +558,19 @@ public class BitmapIndexRecordGenerationUtils {
     scanner.scan();
 
     return ClosableIterator.wrap(records.iterator());
+  }
+
+  public static String constructBitmapKey(String bitmapKey, String partitionPath, String fileId) {
+    String partition = StringUtils.isNullOrEmpty(partitionPath) ? "." : partitionPath;
+    return String.format("%s%s%s%s%s",
+            bitmapKey, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
+            partition, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
+            fileId);
+  }
+
+  public static String constructBitmapKey(String colName, String colValue, String partitionPath, String fileId) {
+    String bitmapKey = String.format("%s%s%s", colName, BITMAP_INDEX_RECORD_KEY_SEPARATOR, colValue);
+    return constructBitmapKey(bitmapKey, partitionPath, fileId);
   }
 }
 

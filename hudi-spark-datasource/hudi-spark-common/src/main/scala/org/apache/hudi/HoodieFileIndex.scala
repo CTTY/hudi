@@ -122,6 +122,7 @@ case class HoodieFileIndex(spark: SparkSession,
     new SecondaryIndexSupport(spark, metadataConfig, metaClient),
     new ExpressionIndexSupport(spark, schema, metadataConfig, metaClient),
     new BloomFiltersIndexSupport(spark, metadataConfig, metaClient),
+    new BitmapIndexSupport(spark, metadataConfig, metaClient),
     new ColumnStatsIndexSupport(spark, schema, metadataConfig, metaClient)
   )
 
