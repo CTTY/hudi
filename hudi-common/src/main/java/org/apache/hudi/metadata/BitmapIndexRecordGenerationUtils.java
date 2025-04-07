@@ -463,6 +463,7 @@ public class BitmapIndexRecordGenerationUtils {
             });
   }
 
+  // TODO this currently only works for insert...need to make sure update and delete also work
   public static Stream<HoodieRecord> createBitmapFromFile(HoodieTableMetaClient metaClient, String partitionPath,
                                                           String fileName, List<String> columnsToIndex,
                                                           Schema tableSchema, int maxBufferSize, EngineType engineType) {
@@ -515,6 +516,7 @@ public class BitmapIndexRecordGenerationUtils {
         toBitmap.computeIfAbsent(mapKey, v -> new Roaring64NavigableMap()).add(record.getCurrentPosition());
       });
     }
+    records.close();
 
     return toBitmap.keySet().stream().map(mapKey -> {
       // the payload key is in the format of "partitionPath_fileId$bitmapKey"
