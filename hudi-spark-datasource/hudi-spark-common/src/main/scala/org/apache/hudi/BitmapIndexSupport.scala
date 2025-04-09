@@ -1,7 +1,7 @@
 package org.apache.hudi
 
 import org.apache.hudi.common.config.HoodieMetadataConfig
-import org.apache.hudi.common.model.FileSlice
+import org.apache.hudi.common.model.{FileSlice, HoodieLogFile}
 import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.table.log.LogReaderUtils
 import org.apache.hudi.metadata.{HoodieTableMetadataUtil, MetadataPartitionType}
@@ -10,8 +10,9 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal, Not}
 import org.roaringbitmap.longlong.Roaring64NavigableMap
 import org.slf4j.LoggerFactory
+import org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.constructBitmapRecordKey
 
-import org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.constructBitmapKey
+import java.util.stream.Collectors
 import scala.collection.mutable.ArrayBuffer
 
 class BitmapIndexSupport(spark: SparkSession,
@@ -76,7 +77,7 @@ class BitmapIndexSupport(spark: SparkSession,
         getAllFileNames(fileSlices)
       } else {
         // eliminate this file slice
-        Option.empty
+        Array.empty[String]
       }
     }).toSet
 
@@ -96,7 +97,7 @@ class BitmapIndexSupport(spark: SparkSession,
     for (eq: EqualTo <- equalToArray) {
       val colName = eq.left.asInstanceOf[AttributeReference].name
       val colVal = eq.right.asInstanceOf[Literal].toString()
-      val bitmapRecordKey = constructBitmapKey(colName, colVal, partition, fileId)
+      val bitmapRecordKey = constructBitmapRecordKey(colName, colVal, partition, fileId)
       val bitmapKeyList = new java.util.ArrayList[String]
       bitmapKeyList.add(bitmapRecordKey)
       if (varBitmap == null) {
@@ -129,7 +130,8 @@ class BitmapIndexSupport(spark: SparkSession,
 
   private def getAllFileNames(fileSlices: Seq[FileSlice]): Seq[String] = {
     fileSlices.flatMap(fileSlice => {
-      val logFileNames: Array[String] = fileSlice.getLogFiles.map(_.getFileName).toArray[String](filename => new Array[String](filename))
+      val logFileNames: Array[String] = JavaScalaConverters.convertJavaListToScalaSeq(
+        fileSlice.getLogFiles.collect(Collectors.toList[HoodieLogFile])).map(_.getFileName).toArray
       val baseFileOpt = fileSlice.getBaseFile
       val allFileNames: Array[String] = if (baseFileOpt.isPresent) {
         val baseFileName: String = baseFileOpt.get().getFileName

@@ -31,7 +31,6 @@ import org.apache.hudi.common.model.HoodieAvroRecord;
 import org.apache.hudi.common.model.HoodieBaseFile;
 import org.apache.hudi.common.model.HoodieCommitMetadata;
 import org.apache.hudi.common.model.HoodieFileFormat;
-import org.apache.hudi.common.model.HoodieIndexDefinition;
 import org.apache.hudi.common.model.HoodieKey;
 import org.apache.hudi.common.model.HoodieLogFile;
 import org.apache.hudi.common.model.HoodieRecord;
@@ -39,12 +38,10 @@ import org.apache.hudi.common.model.HoodieRecordMerger;
 import org.apache.hudi.common.model.HoodieWriteStat;
 import org.apache.hudi.common.model.WriteOperationType;
 import org.apache.hudi.common.table.HoodieTableMetaClient;
-import org.apache.hudi.common.table.TableSchemaResolver;
 import org.apache.hudi.common.table.log.HoodieFileSliceReader;
 import org.apache.hudi.common.table.log.HoodieMergedLogRecordScanner;
 import org.apache.hudi.common.table.log.HoodieUnMergedLogRecordScanner;
 import org.apache.hudi.common.table.log.LogReaderUtils;
-import org.apache.hudi.common.table.timeline.HoodieInstant;
 import org.apache.hudi.common.table.view.HoodieTableFileSystemView;
 import org.apache.hudi.common.util.CollectionUtils;
 import org.apache.hudi.common.util.FileIOUtils;
@@ -76,7 +73,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -88,41 +84,36 @@ import static org.apache.hudi.common.config.HoodieCommonConfig.SPILLABLE_DISK_MA
 import static org.apache.hudi.common.util.ConfigUtils.getReaderConfigs;
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.BITMAP_INDEX_RECORD_KEY_SEPARATOR;
-import static org.apache.hudi.metadata.HoodieMetadataPayload.createBitmapIndexRecord;
 import static org.apache.hudi.metadata.HoodieTableMetadata.EMPTY_PARTITION_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadata.NON_PARTITIONED_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX;
-import static org.apache.hudi.metadata.HoodieTableMetadataUtil.filePath;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getPartitionLatestFileSlicesIncludingInflight;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.tryResolveSchemaForTable;
 
 /**
- * Utility methods for generating secondary index records during initialization and updates.
- * TODO: implement the logic here for bitmap index
- * TODO: refactor this with SecondaryIndexRecordGenerationUtils
+ * Utility methods for generating bitmap index records during initialization and updates.
  */
 public class BitmapIndexRecordGenerationUtils {
 
   private static final Logger LOG = LoggerFactory.getLogger(BitmapIndexRecordGenerationUtils.class);
 
   /**
-   * Converts the write stats to secondary index records.
+   * Converts the write stats to bitmap index records.
    *
    * @param allWriteStats   list of write stats
    * @param instantTime     instant time
-   * @param indexDefinition secondary index definition
+   * @param metadata        table metadata
    * @param metadataConfig  metadata config
    * @param fsView          file system view as of instant time
    * @param dataMetaClient  data table meta client
    * @param engineContext   engine context
    * @param engineType      engine type (e.g. SPARK, FLINK or JAVA)
-   * @return {@link HoodieData} of {@link HoodieRecord} to be updated in the metadata table for the given secondary index partition
-   * TODO: implement this for bitmap index
+   * @return {@link HoodieData} of {@link HoodieRecord} to be updated in the metadata table under bitmap index partition
    */
   @VisibleForTesting
   public static HoodieData<HoodieRecord> convertWriteStatsToBitmapIndexRecords(List<HoodieWriteStat> allWriteStats,
                                                                                String instantTime,
-                                                                               HoodieIndexDefinition indexDefinition,
+                                                                               HoodieBackedTableMetadata metadata,
                                                                                HoodieMetadataConfig metadataConfig,
                                                                                HoodieTableFileSystemView fsView,
                                                                                HoodieTableMetaClient dataMetaClient,
@@ -143,69 +134,156 @@ public class BitmapIndexRecordGenerationUtils {
       throw new HoodieException("Failed to get latest schema for " + dataMetaClient.getBasePath(), e);
     }
     Map<String, List<HoodieWriteStat>> writeStatsByFileId = allWriteStats.stream().collect(Collectors.groupingBy(HoodieWriteStat::getFileId));
-    int parallelism = Math.max(Math.min(writeStatsByFileId.size(), metadataConfig.getSecondaryIndexParallelism()), 1);
+    int parallelism = Math.max(Math.min(writeStatsByFileId.size(), metadataConfig.getBitmapIndexParallelism()), 1);
 
     return engineContext.parallelize(new ArrayList<>(writeStatsByFileId.entrySet()), parallelism).flatMap(writeStatsByFileIdEntry -> {
       String fileId = writeStatsByFileIdEntry.getKey();
       List<HoodieWriteStat> writeStats = writeStatsByFileIdEntry.getValue();
       String partition = writeStats.get(0).getPartitionPath();
       FileSlice previousFileSliceForFileId = fsView.getLatestFileSlice(partition, fileId).orElse(null);
-      Map<String, String> recordKeyToSecondaryKeyForPreviousFileSlice;
+      Map<String, PositionedColumnInfo> recordKeyToColInfoForPreviousFileSlice;
       if (previousFileSliceForFileId == null) {
         // new file slice, so empty mapping for previous slice
-        recordKeyToSecondaryKeyForPreviousFileSlice = Collections.emptyMap();
+        recordKeyToColInfoForPreviousFileSlice = Collections.emptyMap();
       } else {
         StoragePath previousBaseFile = previousFileSliceForFileId.getBaseFile().map(HoodieBaseFile::getStoragePath).orElse(null);
         List<String> logFiles =
-                previousFileSliceForFileId.getLogFiles().sorted(HoodieLogFile.getLogFileComparator()).map(HoodieLogFile::getPath).map(StoragePath::toString).collect(Collectors.toList());
-        recordKeyToSecondaryKeyForPreviousFileSlice =
-                getRecordKeyToBitmapKey(dataMetaClient, engineType, logFiles, tableSchema, partition, Option.ofNullable(previousBaseFile), indexDefinition, instantTime);
+                previousFileSliceForFileId.getLogFiles()
+                        .sorted(HoodieLogFile.getLogFileComparator())
+                        .map(HoodieLogFile::getPath)
+                        .map(StoragePath::toString)
+                        .collect(Collectors.toList());
+        recordKeyToColInfoForPreviousFileSlice =
+                getRecordKeyToPositionedColumnInfo(dataMetaClient, engineType, logFiles, tableSchema,
+                        partition, Option.ofNullable(previousBaseFile),
+                        metadataConfig.getColumnsEnabledForBitmapIndex(), instantTime);
       }
       List<FileSlice> latestIncludingInflightFileSlices = getPartitionLatestFileSlicesIncludingInflight(dataMetaClient, Option.empty(), partition);
       FileSlice currentFileSliceForFileId = latestIncludingInflightFileSlices.stream().filter(fs -> fs.getFileId().equals(fileId)).findFirst()
               .orElseThrow(() -> new HoodieException("Could not find any file slice for fileId " + fileId));
       StoragePath currentBaseFile = currentFileSliceForFileId.getBaseFile().map(HoodieBaseFile::getStoragePath).orElse(null);
-      List<String> logFilesIncludingInflight =
-              currentFileSliceForFileId.getLogFiles().sorted(HoodieLogFile.getLogFileComparator()).map(HoodieLogFile::getPath).map(StoragePath::toString).collect(Collectors.toList());
-      Map<String, String> recordKeyToSecondaryKeyForCurrentFileSlice =
-              getRecordKeyToBitmapKey(dataMetaClient, engineType, logFilesIncludingInflight, tableSchema, partition, Option.ofNullable(currentBaseFile), indexDefinition, instantTime);
-      // Need to find what secondary index record should be deleted, and what should be inserted.
-      // For each entry in recordKeyToSecondaryKeyForCurrentFileSlice, if it is not present in recordKeyToSecondaryKeyForPreviousFileSlice, then it should be inserted.
-      // For each entry in recordKeyToSecondaryKeyForCurrentFileSlice, if it is present in recordKeyToSecondaryKeyForPreviousFileSlice, then it should be updated.
-      // For each entry in recordKeyToSecondaryKeyForPreviousFileSlice, if it is not present in recordKeyToSecondaryKeyForCurrentFileSlice, then it should be deleted.
+      List<String> logFilesIncludingInflight = currentFileSliceForFileId
+              .getLogFiles()
+              .sorted(HoodieLogFile.getLogFileComparator())
+              .map(HoodieLogFile::getPath)
+              .map(StoragePath::toString)
+              .collect(Collectors.toList());
+      Map<String, PositionedColumnInfo> recordKeyToColInfoForCurrentFileSlice =
+              getRecordKeyToPositionedColumnInfo(dataMetaClient, engineType, logFilesIncludingInflight, tableSchema,
+                      partition, Option.ofNullable(currentBaseFile),
+                      metadataConfig.getColumnsEnabledForBitmapIndex(), instantTime);
       List<HoodieRecord> records = new ArrayList<>();
-      // TODO: fill the bitmap with real positions
-      Roaring64NavigableMap bitmap = new Roaring64NavigableMap();
-      bitmap.add(1L);
-      bitmap.add(2L);
-      bitmap.add(4L);
-      recordKeyToSecondaryKeyForCurrentFileSlice.forEach((recordKey, bitmapKey) -> {
-        // TODO revisit this logic
-        if (!recordKeyToSecondaryKeyForPreviousFileSlice.containsKey(recordKey)) {
-          records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
-        } else {
-          // delete previous entry and insert new value if secondaryKey is different
-          if (!recordKeyToSecondaryKeyForPreviousFileSlice.get(recordKey).equals(bitmapKey)) {
-            records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
-            records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
-          }
-        }
-      });
-      recordKeyToSecondaryKeyForPreviousFileSlice.forEach((recordKey, bitmapKey) -> {
-        if (!recordKeyToSecondaryKeyForCurrentFileSlice.containsKey(recordKey)) {
-          records.add(createBitmapIndexRecord(partition, fileId, bitmapKey, indexDefinition.getIndexName(), bitmap));
-        }
-      });
+      // get updated map<bitmapRecordKey, bitmap> and convert it into bitmap records
+      getUpdatedBitmaps(recordKeyToColInfoForPreviousFileSlice, recordKeyToColInfoForCurrentFileSlice, metadata, partition, fileId)
+              .forEach((bitmapRecordKey, bitmap) -> records.add(HoodieMetadataPayload.createBitmapIndexRecord(bitmapRecordKey, bitmap)));
       return records.iterator();
     });
   }
 
-  private static Map<String, String> getRecordKeyToBitmapKey(HoodieTableMetaClient metaClient,
-                                                             EngineType engineType, List<String> logFilePaths,
-                                                             Schema tableSchema, String partition,
-                                                             Option<StoragePath> dataFilePath,
-                                                             HoodieIndexDefinition indexDefinition,
-                                                             String instantTime) throws Exception {
+  private static Map<String, Roaring64NavigableMap> getUpdatedBitmaps(Map<String, PositionedColumnInfo> recordKeyToColInfoForPreviousFileSlice,
+                                                                      Map<String, PositionedColumnInfo> recordKeyToColInfoForCurrentFileSlice,
+                                                                      HoodieBackedTableMetadata metadata,
+                                                                      String partition,
+                                                                      String fileId) {
+    /*
+        Need to find what bitmap index record should be deleted, and what should be inserted.
+        for each entry in recordKeyToColumnPairsForCurrentFileSlice,
+          if it is not present in recordKeyToColumnPairsForPreviousFileSlice
+            meaning it's a new record
+            update bitmap for every indexed columns (add new positions)
+          else (if is present in recordKeyToColumnPairsForPreviousFileSlice)
+            meaning it's an existing record
+            only update bitmap for every column that has changed (remove old positions and add new positions)
+
+        for each entry in recordKeyToColumnPairsForPreviousFileSlice
+          if it is not present in recordKeyToColumnPairsForCurrentFileSlice
+            meaning it's deleted
+            update the bitmap for every indexed columns (remove positions)
+    */
+    // map<columnPairsKeyString, bitmap>
+    Map<String, Roaring64NavigableMap> updatedBitmaps = new HashMap<>();
+    recordKeyToColInfoForCurrentFileSlice.forEach((recordKey, newPositionedColumnInfo) -> {
+      if (!recordKeyToColInfoForPreviousFileSlice.containsKey(recordKey)) {
+        // new record, update bitmap for every indexed columns
+        newPositionedColumnInfo.columnInfos.forEach((column, colVal) ->
+          addPosToBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, newPositionedColumnInfo.pos));
+      } else {
+        // update existing record, only update bitmap for changed columns
+        PositionedColumnInfo oldPositionedColumnInfo = recordKeyToColInfoForPreviousFileSlice.get(recordKey);
+        for (String column : newPositionedColumnInfo.columnInfos.keySet()) {
+          String oldVal = oldPositionedColumnInfo.columnInfos.get(column);
+          String newVal = newPositionedColumnInfo.columnInfos.get(column);
+          // TODO maybe consider the case when vals are null?
+          if (!oldVal.equals(newVal)) {
+            removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, oldVal, oldPositionedColumnInfo.pos);
+            addPosToBitmap(metadata, partition, fileId, updatedBitmaps, column, newVal, newPositionedColumnInfo.pos);
+          }
+        }
+      }
+    });
+
+    recordKeyToColInfoForPreviousFileSlice.forEach((recordKey, oldPositionedColumnInfo) -> {
+      if (!recordKeyToColInfoForCurrentFileSlice.containsKey(recordKey)) {
+        // deleted record, remove positions from all associated bitmaps
+        oldPositionedColumnInfo.columnInfos.forEach((column, colVal) ->
+          removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, oldPositionedColumnInfo.pos));
+      }
+    });
+
+    return updatedBitmaps;
+  }
+
+  private static void addPosToBitmap(HoodieBackedTableMetadata metadata,
+                                     String partition,
+                                     String fileId,
+                                     Map<String, Roaring64NavigableMap> cachedBitmaps,
+                                     String columnName,
+                                     String columnVal,
+                                     long pos) {
+    String bitmapRecordKey = constructBitmapRecordKey(columnName, columnVal, partition, fileId);
+    cachedBitmaps
+            .computeIfAbsent(bitmapRecordKey,
+                    bitmap -> loadBitmapFromMetadata(metadata, bitmapRecordKey))
+            .addLong(pos);
+  }
+
+  private static void removePosFromBitmap(HoodieBackedTableMetadata metadata,
+                                          String partition,
+                                          String fileId,
+                                          Map<String, Roaring64NavigableMap> cachedBitmaps,
+                                          String columnName,
+                                          String columnVal,
+                                          long pos) {
+    String bitmapRecordKey = constructBitmapRecordKey(columnName, columnVal, partition, fileId);
+    cachedBitmaps
+            .computeIfAbsent(bitmapRecordKey,
+                    bitmap -> loadBitmapFromMetadata(metadata, bitmapRecordKey))
+            .removeLong(pos);
+  }
+
+  private static Roaring64NavigableMap loadBitmapFromMetadata(HoodieBackedTableMetadata metadata, String bitmapRecordKey) {
+    return metadata
+            .getRecordByKey(bitmapRecordKey, MetadataPartitionType.BITMAP_INDEX.getPartitionPath())
+            .map(record -> {
+              try {
+                return LogReaderUtils.decodeRecordPositionsHeader(record.getData().getBitmapIndexMetadata().get().getBitmap());
+              } catch (IOException ioe) {
+                LOG.error("Failed to get bitmap for bitmapRecordKey: {}", bitmapRecordKey);
+              }
+              return null;
+            }).orElseGet(() -> {
+              LOG.warn("Cannot get bitmap for bitmapRecordKey: {}, using a new bitmap", bitmapRecordKey);
+              return new Roaring64NavigableMap();
+            });
+  }
+
+  // return map <recordKey, [(colName, colValue), (colName, colValue)]>
+  private static Map<String, PositionedColumnInfo> getRecordKeyToPositionedColumnInfo(HoodieTableMetaClient metaClient,
+                                                                                      EngineType engineType, List<String> logFilePaths,
+                                                                                      Schema tableSchema, String partition,
+                                                                                      Option<StoragePath> dataFilePath,
+                                                                                      List<String> indexedColumns,
+                                                                                      String instantTime) throws Exception {
     final String basePath = metaClient.getBasePath().toString();
     final StorageConfiguration<?> storageConf = metaClient.getStorageConf();
 
@@ -235,184 +313,46 @@ public class BitmapIndexRecordGenerationUtils {
 
     Option<HoodieFileReader> baseFileReader = Option.empty();
     if (dataFilePath.isPresent()) {
-      baseFileReader = Option.of(HoodieIOFactory.getIOFactory(metaClient.getStorage()).getReaderFactory(recordMerger.getRecordType()).getFileReader(getReaderConfigs(storageConf), dataFilePath.get()));
+      baseFileReader = Option.of(HoodieIOFactory.getIOFactory(metaClient.getStorage())
+              .getReaderFactory(recordMerger.getRecordType())
+              .getFileReader(getReaderConfigs(storageConf), dataFilePath.get()));
     }
-    HoodieFileSliceReader fileSliceReader = new HoodieFileSliceReader(baseFileReader, mergedLogRecordScanner, tableSchema, metaClient.getTableConfig().getPreCombineField(), recordMerger,
-            metaClient.getTableConfig().getProps(), Option.empty(), Option.empty());
+    HoodieFileSliceReader fileSliceReader =
+            new HoodieFileSliceReader(baseFileReader, mergedLogRecordScanner, tableSchema,
+                    metaClient.getTableConfig().getPreCombineField(), recordMerger,
+                    metaClient.getTableConfig().getProps(), Option.empty(), Option.empty());
     // Collect the records from the iterator in a map by record key to secondary key
-    Map<String, String> recordKeyToSecondaryKey = new HashMap<>();
+    Map<String, PositionedColumnInfo> recordKeyToColumnPairsAndPos = new HashMap<>();
     while (fileSliceReader.hasNext()) {
       HoodieRecord record = (HoodieRecord) fileSliceReader.next();
-      String secondaryKey = getBitmapKey(record, tableSchema, indexDefinition);
-      if (secondaryKey != null) {
+      Map<String, String> columnPairs = getColumnInfos(record, tableSchema, indexedColumns);
+      if (columnPairs != null) {
         // no delete records here
-        recordKeyToSecondaryKey.put(record.getRecordKey(tableSchema, HoodieRecord.RECORD_KEY_METADATA_FIELD), secondaryKey);
+        recordKeyToColumnPairsAndPos.put(record.getRecordKey(tableSchema, HoodieRecord.RECORD_KEY_METADATA_FIELD), new PositionedColumnInfo(columnPairs, record.getCurrentPosition()));
       }
     }
-    return recordKeyToSecondaryKey;
+    return recordKeyToColumnPairsAndPos;
   }
 
-  private static String getBitmapKey(HoodieRecord record, Schema tableSchema, HoodieIndexDefinition indexDefinition) {
+  private static Map<String, String> getColumnInfos(HoodieRecord record, Schema tableSchema, List<String> indexedColumns) {
+    Map<String, String> columnInfos = new HashMap<>();
     try {
       if (record.toIndexedRecord(tableSchema, CollectionUtils.emptyProps()).isPresent()) {
         GenericRecord genericRecord = (GenericRecord) (record.toIndexedRecord(tableSchema, CollectionUtils.emptyProps()).get()).getData();
-        String secondaryKeyFields = String.join(".", indexDefinition.getSourceFields());
-        return HoodieAvroUtils.getNestedFieldValAsString(genericRecord, secondaryKeyFields, true, false);
+        for (String column : indexedColumns) {
+          columnInfos.put(
+                  column,
+                  HoodieAvroUtils.getNestedFieldValAsString(genericRecord, column, true, false));
+        }
+        return columnInfos;
       }
     } catch (IOException e) {
-      LOG.debug("Failed to fetch secondary key for record key " + record.getKey().toString());
+      LOG.debug("Failed to fetch bitmap column pairs for record key " + record.getKey().toString());
     }
     return null;
   }
 
-  public static HoodieData<HoodieRecord> readBitmapKeysFromFileSlices(HoodieEngineContext engineContext,
-                                                                      List<Pair<String, FileSlice>> partitionFileSlicePairs,
-                                                                      int bitmapIndexMaxParallelism,
-                                                                      String activeModule, HoodieTableMetaClient metaClient, EngineType engineType,
-                                                                      HoodieIndexDefinition indexDefinition) {
-    if (partitionFileSlicePairs.isEmpty()) {
-      return engineContext.emptyHoodieData();
-    }
-    final int parallelism = Math.min(partitionFileSlicePairs.size(), bitmapIndexMaxParallelism);
-    final StoragePath basePath = metaClient.getBasePath();
-    Schema tableSchema;
-    try {
-      tableSchema = new TableSchemaResolver(metaClient).getTableAvroSchema();
-    } catch (Exception e) {
-      throw new HoodieException("Failed to get latest schema for " + metaClient.getBasePath(), e);
-    }
-
-    engineContext.setJobStatus(activeModule, "Bitmap Index: reading secondary keys from " + partitionFileSlicePairs.size() + " file slices");
-    return engineContext.parallelize(partitionFileSlicePairs, parallelism).flatMap(partitionAndBaseFile -> {
-      final String partition = partitionAndBaseFile.getKey();
-      final FileSlice fileSlice = partitionAndBaseFile.getValue();
-      List<String> logFilePaths = fileSlice.getLogFiles().sorted(HoodieLogFile.getLogFileComparator()).map(l -> l.getPath().toString()).collect(Collectors.toList());
-      Option<StoragePath> dataFilePath = Option.ofNullable(fileSlice.getBaseFile().map(baseFile -> filePath(basePath, partition, baseFile.getFileName())).orElseGet(null));
-      Schema readerSchema;
-      if (dataFilePath.isPresent()) {
-        readerSchema = HoodieIOFactory.getIOFactory(metaClient.getStorage())
-                .getFileFormatUtils(metaClient.getTableConfig().getBaseFileFormat())
-                .readAvroSchema(metaClient.getStorage(), dataFilePath.get());
-      } else {
-        readerSchema = tableSchema;
-      }
-      return createBitmapIndexGenerator(metaClient, engineType, logFilePaths, readerSchema, partition, dataFilePath, indexDefinition,
-              metaClient.getActiveTimeline().filterCompletedInstants().lastInstant().map(HoodieInstant::requestedTime).orElse(""));
-    });
-  }
-
-  private static ClosableIterator<HoodieRecord> createBitmapIndexGenerator(HoodieTableMetaClient metaClient,
-                                                                           EngineType engineType, List<String> logFilePaths,
-                                                                           Schema tableSchema, String partition,
-                                                                           Option<StoragePath> dataFilePath,
-                                                                           HoodieIndexDefinition indexDefinition,
-                                                                           String instantTime) throws Exception {
-    final String basePath = metaClient.getBasePath().toString();
-    final StorageConfiguration<?> storageConf = metaClient.getStorageConf();
-
-    HoodieRecordMerger recordMerger = HoodieRecordUtils.createRecordMerger(
-            basePath,
-            engineType,
-            Collections.emptyList(),
-            metaClient.getTableConfig().getRecordMergeStrategyId());
-
-    HoodieMergedLogRecordScanner mergedLogRecordScanner = HoodieMergedLogRecordScanner.newBuilder()
-            .withStorage(metaClient.getStorage())
-            .withBasePath(metaClient.getBasePath())
-            .withLogFilePaths(logFilePaths)
-            .withReaderSchema(tableSchema)
-            .withLatestInstantTime(instantTime)
-            .withReverseReader(false)
-            .withMaxMemorySizeInBytes(storageConf.getLong(MAX_MEMORY_FOR_COMPACTION.key(), DEFAULT_MAX_MEMORY_FOR_SPILLABLE_MAP_IN_BYTES))
-            .withBufferSize(HoodieMetadataConfig.MAX_READER_BUFFER_SIZE_PROP.defaultValue())
-            .withSpillableMapBasePath(FileIOUtils.getDefaultSpillableMapBasePath())
-            .withPartition(partition)
-            .withOptimizedLogBlocksScan(storageConf.getBoolean("hoodie" + HoodieMetadataConfig.OPTIMIZED_LOG_BLOCKS_SCAN, false))
-            .withDiskMapType(storageConf.getEnum(SPILLABLE_DISK_MAP_TYPE.key(), SPILLABLE_DISK_MAP_TYPE.defaultValue()))
-            .withBitCaskDiskMapCompressionEnabled(storageConf.getBoolean(DISK_MAP_BITCASK_COMPRESSION_ENABLED.key(), DISK_MAP_BITCASK_COMPRESSION_ENABLED.defaultValue()))
-            .withRecordMerger(recordMerger)
-            .withTableMetaClient(metaClient)
-            .build();
-
-    Option<HoodieFileReader> baseFileReader = Option.empty();
-    String fileId;
-    if (dataFilePath.isPresent()) {
-      baseFileReader = Option.of(HoodieIOFactory.getIOFactory(metaClient.getStorage()).getReaderFactory(recordMerger.getRecordType()).getFileReader(getReaderConfigs(storageConf), dataFilePath.get()));
-      fileId = FSUtils.getFileId(dataFilePath.get().getName());
-    } else {
-      fileId = FSUtils.getFileId(new StoragePath(logFilePaths.get(0)).getName());
-    }
-    HoodieFileSliceReader fileSliceReader = new HoodieFileSliceReader(baseFileReader, mergedLogRecordScanner, tableSchema, metaClient.getTableConfig().getPreCombineField(), recordMerger,
-            metaClient.getTableConfig().getProps(),
-            Option.empty(), Option.empty());
-    ClosableIterator<HoodieRecord> fileSliceIterator = ClosableIterator.wrap(fileSliceReader);
-    return new ClosableIterator<HoodieRecord>() {
-      private HoodieRecord nextValidRecord;
-
-      @Override
-      public void close() {
-        fileSliceIterator.close();
-      }
-
-      @Override
-      public boolean hasNext() {
-        // As part of hasNext() we try to find the valid non-delete record that has a secondary key.
-        if (nextValidRecord != null) {
-          return true;
-        }
-
-        // Secondary key is null when there is a delete record, and we only have the record key.
-        // This can happen when the record is deleted in the log file.
-        // In this case, we need not index the record because for the given record key,
-        // we have already prepared the delete record before reaching this point.
-        // NOTE: Delete record should not happen when initializing the secondary index i.e. when called from readSecondaryKeysFromFileSlices,
-        // because from that call, we get the merged records as of some committed instant. So, delete records must have been filtered out.
-        // Loop to find the next valid record or exhaust the iterator.
-        while (fileSliceIterator.hasNext()) {
-          HoodieRecord record = fileSliceIterator.next();
-          String bitmapKey = getBitmapKey(record);
-          Roaring64NavigableMap bitmap = new Roaring64NavigableMap();
-          bitmap.add(record.getCurrentPosition());
-          if (bitmapKey != null) {
-            nextValidRecord = createBitmapIndexRecord(
-                    partition,
-                    fileId,
-                    bitmapKey,
-                    indexDefinition.getIndexName(),
-                    bitmap);
-            return true;
-          }
-        }
-
-        // If no valid records are found
-        return false;
-      }
-
-      @Override
-      public HoodieRecord next() {
-        if (!hasNext()) {
-          throw new NoSuchElementException("No more valid records available.");
-        }
-        HoodieRecord result = nextValidRecord;
-        nextValidRecord = null;  // Reset for the next call
-        return result;
-      }
-
-      private String getBitmapKey(HoodieRecord record) {
-        try {
-          if (record.toIndexedRecord(tableSchema, CollectionUtils.emptyProps()).isPresent()) {
-            GenericRecord genericRecord = (GenericRecord) (record.toIndexedRecord(tableSchema, CollectionUtils.emptyProps()).get()).getData();
-            String bitmapKeyFields = String.join(".", indexDefinition.getSourceFields());
-            return HoodieAvroUtils.getNestedFieldValAsString(genericRecord, bitmapKeyFields, true, false);
-          }
-        } catch (IOException e) {
-          throw new RuntimeException("Failed to fetch records: " + e);
-        }
-        return null;
-      }
-    };
-  }
-
+  // TODO switch to use convertWriteStatsToBitmapIndexRecords above that handles update and delete
   public static HoodieData<HoodieRecord> convertMetadataToBitmapIndexRecords(
           HoodieCommitMetadata commitMetadata,
           HoodieEngineContext engineContext,
@@ -463,7 +403,7 @@ public class BitmapIndexRecordGenerationUtils {
             });
   }
 
-  // TODO this currently only works for insert...need to make sure update and delete also work
+  // TODO verify that this is only used for initialization
   public static Stream<HoodieRecord> createBitmapFromFile(HoodieTableMetaClient metaClient, String partitionPath,
                                                           String fileName, List<String> columnsToIndex,
                                                           Schema tableSchema, int maxBufferSize, EngineType engineType) {
@@ -521,7 +461,7 @@ public class BitmapIndexRecordGenerationUtils {
     return toBitmap.keySet().stream().map(mapKey -> {
       // the payload key is in the format of "partitionPath_fileId$bitmapKey"
       HoodieKey hoodieKey = new HoodieKey(
-              constructBitmapKey(mapKey, partitionPath, fileId),
+              constructBitmapRecordKey(mapKey, partitionPath, fileId),
               PARTITION_NAME_BITMAP_INDEX);
       try {
         HoodieMetadataPayload payload = new HoodieMetadataPayload(hoodieKey.getRecordKey(),
@@ -562,7 +502,7 @@ public class BitmapIndexRecordGenerationUtils {
     return ClosableIterator.wrap(records.iterator());
   }
 
-  public static String constructBitmapKey(String bitmapKey, String partitionPath, String fileId) {
+  public static String constructBitmapRecordKey(String bitmapKey, String partitionPath, String fileId) {
     String partition = StringUtils.isNullOrEmpty(partitionPath) ? "." : partitionPath;
     return String.format("%s%s%s%s%s",
             bitmapKey, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
@@ -570,9 +510,20 @@ public class BitmapIndexRecordGenerationUtils {
             fileId);
   }
 
-  public static String constructBitmapKey(String colName, String colValue, String partitionPath, String fileId) {
+  public static String constructBitmapRecordKey(String colName, String colValue, String partitionPath, String fileId) {
     String bitmapKey = String.format("%s%s%s", colName, BITMAP_INDEX_RECORD_KEY_SEPARATOR, colValue);
-    return constructBitmapKey(bitmapKey, partitionPath, fileId);
+    return constructBitmapRecordKey(bitmapKey, partitionPath, fileId);
+  }
+
+  static class PositionedColumnInfo {
+    // map<column_name, column_value>
+    Map<String, String> columnInfos;
+    long pos;
+
+    public PositionedColumnInfo(Map<String, String> columnInfos, long pos) {
+      this.columnInfos = columnInfos;
+      this.pos = pos;
+    }
   }
 }
 

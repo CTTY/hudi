@@ -956,6 +956,16 @@ public final class HoodieMetadataConfig extends HoodieConfig {
       return this;
     }
 
+    public Builder enableBitmapIndex() {
+      metadataConfig.setValue(BITMAP_INDEX_ENABLE_PROP, String.valueOf(true));
+      return this;
+    }
+
+    public Builder withBitmapIndexColumns(String columns) {
+      metadataConfig.setValue(BITMAP_INDEX_FOR_COLUMNS, columns);
+      return this;
+    }
+
     public Builder withDropMetadataIndex(String indexName) {
       metadataConfig.setValue(DROP_METADATA_INDEX, indexName);
       return this;

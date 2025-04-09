@@ -19,7 +19,6 @@
 package org.apache.hudi.metadata;
 
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
-import static org.apache.hudi.metadata.HoodieMetadataPayload.BITMAP_INDEX_RECORD_KEY_SEPARATOR;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.SECONDARY_INDEX_RECORD_KEY_SEPARATOR;
 
 public class SecondaryIndexKeyUtils {
@@ -42,22 +41,6 @@ public class SecondaryIndexKeyUtils {
 
   public static String constructSecondaryIndexKey(String secondaryKey, String recordKey) {
     return escapeSpecialChars(secondaryKey) + SECONDARY_INDEX_RECORD_KEY_SEPARATOR + escapeSpecialChars(recordKey);
-  }
-
-  // TODO refactor this
-  public static String constructBitmapIndexKey(String partitionPath, String fileId, String bitmapKey) {
-    // TODO change this to <indexed_col>$<bitmap_key>$<partition_path>$<file_id>
-    return String.format("%s%s%s%s%s", partitionPath, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
-            fileId, BITMAP_INDEX_RECORD_KEY_SEPARATOR, escapeSpecialChars(bitmapKey));
-  }
-
-  public static String constructBitmapIndexKey1(String columnName, String columnValue, String partitionPath, String fileId) {
-    // TODO change this to <indexed_col>$<bitmap_key>$<partition_path>$<file_id>
-    return String.format("%s%s%s%s%s%s%s",
-            escapeSpecialChars(columnName), BITMAP_INDEX_RECORD_KEY_SEPARATOR,
-            escapeSpecialChars(columnValue), BITMAP_INDEX_RECORD_KEY_SEPARATOR,
-            partitionPath, BITMAP_INDEX_RECORD_KEY_SEPARATOR,
-            fileId);
   }
 
   private static String escapeSpecialChars(String str) {

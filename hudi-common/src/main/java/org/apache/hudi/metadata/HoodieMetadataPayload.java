@@ -685,10 +685,9 @@ public class HoodieMetadataPayload implements HoodieRecordPayload<HoodieMetadata
     return secondaryIndexMetadata.getIsDeleted();
   }
 
-  public static HoodieRecord<HoodieMetadataPayload> createBitmapIndexRecord(String partitionPath, String fileId, String bitmapKey,
-                                                                            String indexName, Roaring64NavigableMap bitmap) {
+  public static HoodieRecord<HoodieMetadataPayload> createBitmapIndexRecord(String bitmapRecordKey, Roaring64NavigableMap bitmap) {
     // the payload key is in the format of "partitionPath_fileId$bitmapKey"
-    HoodieKey key = new HoodieKey(SecondaryIndexKeyUtils.constructBitmapIndexKey(partitionPath, fileId, bitmapKey), indexName);
+    HoodieKey key = new HoodieKey(bitmapRecordKey, MetadataPartitionType.BITMAP_INDEX.getPartitionPath());
     try {
       HoodieMetadataPayload payload = new HoodieMetadataPayload(key.getRecordKey(),
               new HoodieBitmapIndexInfo(LogReaderUtils.encodePositions(bitmap)));
