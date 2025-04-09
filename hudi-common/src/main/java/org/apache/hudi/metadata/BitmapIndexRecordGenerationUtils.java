@@ -18,7 +18,6 @@
 
 package org.apache.hudi.metadata;
 
-import org.apache.avro.LogicalTypes;
 import org.apache.hudi.avro.HoodieAvroUtils;
 import org.apache.hudi.avro.model.HoodieBitmapIndexInfo;
 import org.apache.hudi.common.config.HoodieMetadataConfig;
@@ -38,6 +37,7 @@ import org.apache.hudi.common.model.HoodieRecordMerger;
 import org.apache.hudi.common.model.HoodieWriteStat;
 import org.apache.hudi.common.model.WriteOperationType;
 import org.apache.hudi.common.table.HoodieTableMetaClient;
+import org.apache.hudi.common.table.TableSchemaResolver;
 import org.apache.hudi.common.table.log.HoodieFileSliceReader;
 import org.apache.hudi.common.table.log.HoodieMergedLogRecordScanner;
 import org.apache.hudi.common.table.log.HoodieUnMergedLogRecordScanner;
@@ -59,6 +59,7 @@ import org.apache.hudi.io.storage.HoodieIOFactory;
 import org.apache.hudi.storage.StorageConfiguration;
 import org.apache.hudi.storage.StoragePath;
 
+import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
 import org.roaringbitmap.longlong.Roaring64NavigableMap;
@@ -88,7 +89,6 @@ import static org.apache.hudi.metadata.HoodieTableMetadata.EMPTY_PARTITION_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadata.NON_PARTITIONED_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getPartitionLatestFileSlicesIncludingInflight;
-import static org.apache.hudi.metadata.HoodieTableMetadataUtil.tryResolveSchemaForTable;
 
 /**
  * Utility methods for generating bitmap index records during initialization and updates.
@@ -124,12 +124,13 @@ public class BitmapIndexRecordGenerationUtils {
       String fileName = FSUtils.getFileName(writeStat.getPath(), writeStat.getPartitionPath());
       return FSUtils.isLogFile(fileName) && writeStat.getNumInserts() > 0;
     })) {
-      throw new HoodieIOException("Secondary index cannot support logs having inserts with current offering. Please disable secondary index.");
+      throw new HoodieIOException("Bitmap index cannot support logs having inserts with current offering. Please disable bitmap index.");
     }
 
     Schema tableSchema;
     try {
-      tableSchema = tryResolveSchemaForTable(dataMetaClient).get();
+      // cannot use HoodieTableMetadataUtil.tryResolveSchemaForTable because this may be the table's first commit
+      tableSchema = new TableSchemaResolver(dataMetaClient).getTableAvroSchema();
     } catch (Exception e) {
       throw new HoodieException("Failed to get latest schema for " + dataMetaClient.getBasePath(), e);
     }
@@ -180,26 +181,27 @@ public class BitmapIndexRecordGenerationUtils {
     });
   }
 
+  /*
+    Need to find what bitmap index record should be deleted, and what should be inserted.
+    for each entry in recordKeyToColumnPairsForCurrentFileSlice,
+      if it is not present in recordKeyToColumnPairsForPreviousFileSlice
+        meaning it's a new record
+        update bitmap for every indexed columns (add new positions)
+      else (if is present in recordKeyToColumnPairsForPreviousFileSlice)
+        meaning it's an existing record
+        only update bitmap for every column that has changed (remove old positions and add new positions)
+
+    for each entry in recordKeyToColumnPairsForPreviousFileSlice
+      if it is not present in recordKeyToColumnPairsForCurrentFileSlice
+        meaning it's deleted
+        update the bitmap for every indexed columns (remove positions)
+  */
   private static Map<String, Roaring64NavigableMap> getUpdatedBitmaps(Map<String, PositionedColumnInfo> recordKeyToColInfoForPreviousFileSlice,
                                                                       Map<String, PositionedColumnInfo> recordKeyToColInfoForCurrentFileSlice,
                                                                       HoodieBackedTableMetadata metadata,
                                                                       String partition,
                                                                       String fileId) {
-    /*
-        Need to find what bitmap index record should be deleted, and what should be inserted.
-        for each entry in recordKeyToColumnPairsForCurrentFileSlice,
-          if it is not present in recordKeyToColumnPairsForPreviousFileSlice
-            meaning it's a new record
-            update bitmap for every indexed columns (add new positions)
-          else (if is present in recordKeyToColumnPairsForPreviousFileSlice)
-            meaning it's an existing record
-            only update bitmap for every column that has changed (remove old positions and add new positions)
-
-        for each entry in recordKeyToColumnPairsForPreviousFileSlice
-          if it is not present in recordKeyToColumnPairsForCurrentFileSlice
-            meaning it's deleted
-            update the bitmap for every indexed columns (remove positions)
-    */
+    /* TODO in the cached bitmap, we can only store colName$colVal to save some memory because file group id is the same for this write */
     // map<columnPairsKeyString, bitmap>
     Map<String, Roaring64NavigableMap> updatedBitmaps = new HashMap<>();
     recordKeyToColInfoForCurrentFileSlice.forEach((recordKey, newPositionedColumnInfo) -> {
@@ -213,7 +215,7 @@ public class BitmapIndexRecordGenerationUtils {
         for (String column : newPositionedColumnInfo.columnInfos.keySet()) {
           String oldVal = oldPositionedColumnInfo.columnInfos.get(column);
           String newVal = newPositionedColumnInfo.columnInfos.get(column);
-          // TODO maybe consider the case when vals are null?
+          // TODO consider the case when vals are null?
           if (!oldVal.equals(newVal)) {
             removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, oldVal, oldPositionedColumnInfo.pos);
             addPosToBitmap(metadata, partition, fileId, updatedBitmaps, column, newVal, newPositionedColumnInfo.pos);
@@ -242,8 +244,7 @@ public class BitmapIndexRecordGenerationUtils {
                                      long pos) {
     String bitmapRecordKey = constructBitmapRecordKey(columnName, columnVal, partition, fileId);
     cachedBitmaps
-            .computeIfAbsent(bitmapRecordKey,
-                    bitmap -> loadBitmapFromMetadata(metadata, bitmapRecordKey))
+            .computeIfAbsent(bitmapRecordKey, bitmap -> loadBitmapFromMetadata(metadata, bitmapRecordKey))
             .addLong(pos);
   }
 
@@ -256,8 +257,7 @@ public class BitmapIndexRecordGenerationUtils {
                                           long pos) {
     String bitmapRecordKey = constructBitmapRecordKey(columnName, columnVal, partition, fileId);
     cachedBitmaps
-            .computeIfAbsent(bitmapRecordKey,
-                    bitmap -> loadBitmapFromMetadata(metadata, bitmapRecordKey))
+            .computeIfAbsent(bitmapRecordKey, bitmap -> loadBitmapFromMetadata(metadata, bitmapRecordKey))
             .removeLong(pos);
   }
 

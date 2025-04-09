@@ -51,6 +51,7 @@ import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.{Arguments, EnumSource, MethodSource}
 import org.junit.jupiter.params.provider.Arguments.arguments
+import org.roaringbitmap.longlong.Roaring64NavigableMap
 import org.scalatest.Assertions.{assertResult, assertThrows}
 
 import java.util.concurrent.Executors
@@ -344,14 +345,14 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     //    )
     println("shawn: printing metadata")
     spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60, false)
-    println("shawn: printed metadata")
+    println("shawn: printed metadata after update")
 
     // TODO delete is not working! need to fix
     spark.sql(s"delete from $tableName where record_key_col='row3'")
 
     println("shawn: printing metadata")
     spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60, false)
-    println("shawn: printed metadata")
+    println("shawn: printed metadata after delete")
 
     val metadataConfig = HoodieMetadataConfig.newBuilder()
       .withProperties(metaClient.getTableConfig.getProps)
@@ -359,15 +360,16 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
       .withBitmapIndexColumns(spark.sessionState.conf.getConfString(HoodieMetadataConfig.BITMAP_INDEX_FOR_COLUMNS.key()))
       .build()
     val metadataTable = HoodieTableMetadata.create(new HoodieSparkEngineContext(jsc), metaClient.getStorage, metadataConfig, basePath)
-    val bitmapKeyList = new java.util.ArrayList[String]
-    bitmapKeyList.add("not_record_key_col$def$partition_key_col=p2$") // prefix
-    val bitmap = metadataTable
-      .getRecordsByKeyPrefixes(bitmapKeyList, MetadataPartitionType.BITMAP_INDEX.getPartitionPath, false)
-      .map(record =>
-        LogReaderUtils.decodeRecordPositionsHeader(record.getData.getBitmapIndexMetadata.get().getBitmap))
-      .collectAsList()
-      .get(0)
-    bitmap.getIntCardinality
+    val bitmap1 = getBitmapWithPrefix(metadataTable, "not_record_key_col$def$partition_key_col=p2$") // prefix
+    val bitmap2 = getBitmapWithPrefix(metadataTable, "not_record_key_col$xyz$partition_key_col=p2$") // prefix
+    val bitmap3 = getBitmapWithPrefix(metadataTable, "not_record_key_col$abc$partition_key_col=p1$") // prefix
+    val bitmap4 = getBitmapWithPrefix(metadataTable, "not_record_key_col$cde$partition_key_col=p2$") // prefix
+
+
+    println(s"yxchang: after delete def cardinality: ${bitmap1.getIntCardinality}")
+    println(s"yxchang: after delete xyz cardinality: ${bitmap2.getIntCardinality}")
+    println(s"yxchang: after delete abc cardinality: ${bitmap3.getIntCardinality}")
+    println(s"yxchang: after delete cde cardinality: ${bitmap4.getIntCardinality}")
   }
 
   @Test
@@ -2000,6 +2002,17 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
       .withProps(props)
       .withPath(basePath)
       .build()
+  }
+
+  private def getBitmapWithPrefix(metadataTable: HoodieTableMetadata, prefix: String): Roaring64NavigableMap = {
+    val bitmapKeyList = new java.util.ArrayList[String]
+    bitmapKeyList.add(prefix)
+    metadataTable
+      .getRecordsByKeyPrefixes(bitmapKeyList, MetadataPartitionType.BITMAP_INDEX.getPartitionPath, false)
+      .map(record =>
+        LogReaderUtils.decodeRecordPositionsHeader(record.getData.getBitmapIndexMetadata.get().getBitmap))
+      .collectAsList()
+      .get(0)
   }
 }
 

@@ -174,7 +174,6 @@ import static org.apache.hudi.common.util.ValidationUtils.checkArgument;
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
 import static org.apache.hudi.index.expression.HoodieExpressionIndex.EXPRESSION_OPTION;
 import static org.apache.hudi.index.expression.HoodieExpressionIndex.IDENTITY_TRANSFORM;
-import static org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.convertMetadataToBitmapIndexRecords;
 import static org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.createBitmapFromFile;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.COLUMN_STATS_FIELD_IS_TIGHT_BOUND;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.RECORD_INDEX_MISSING_FILEINDEX_FALLBACK;
@@ -440,9 +439,6 @@ public class HoodieTableMetadataUtil {
     if (enabledPartitionTypes.contains(MetadataPartitionType.RECORD_INDEX.getPartitionPath())) {
       partitionToRecordsMap.put(MetadataPartitionType.RECORD_INDEX.getPartitionPath(), convertMetadataToRecordIndexRecords(context, commitMetadata, metadataConfig,
           dataMetaClient, writesFileIdEncoding, instantTime, engineType));
-    }
-    if (enabledPartitionTypes.contains(MetadataPartitionType.BITMAP_INDEX.getPartitionPath())) {
-      partitionToRecordsMap.put(MetadataPartitionType.BITMAP_INDEX.getPartitionPath(), convertMetadataToBitmapIndexRecords(commitMetadata, context, dataMetaClient, metadataConfig, engineType));
     }
     return partitionToRecordsMap;
   }
