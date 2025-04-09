@@ -101,6 +101,7 @@ class TestCOWDataSource extends HoodieSparkClientTestBase with ScalaAssertionSup
     System.gc()
   }
 
+  // TODO remove this
   @Test
   def shawn(): Unit = {
     val (writeOpts, readOpts) = getWriterReaderOpts()

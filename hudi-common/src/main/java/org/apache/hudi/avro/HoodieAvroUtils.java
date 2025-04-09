@@ -652,17 +652,6 @@ public class HoodieAvroUtils {
     }
   }
 
-  public static Object[] getFieldVals(GenericRecord record, String[] fieldName, boolean returnNullIfNotFound) {
-    int numOfFields = fieldName.length;
-    ValidationUtils.checkArgument(numOfFields != 0, "Number of fields cannot be null!");
-
-    Object[] vals = new Object[numOfFields];
-    for (int i = 0; i < numOfFields; i++) {
-      vals[i] = getFieldVal(record, fieldName[i], returnNullIfNotFound);
-    }
-    return vals;
-  }
-
   /**
    * Get schema for the given field and record. Field can be nested, denoted by dot notation. e.g: a.b.c
    *

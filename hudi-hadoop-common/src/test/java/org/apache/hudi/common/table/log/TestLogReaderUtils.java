@@ -19,7 +19,6 @@
 
 package org.apache.hudi.common.table.log;
 
-import org.apache.hudi.common.util.Base64CodecUtil;
 import org.junit.jupiter.api.Test;
 import org.roaringbitmap.longlong.Roaring64NavigableMap;
 
@@ -40,17 +39,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * Tests for {@link LogReaderUtils}
  */
 public class TestLogReaderUtils {
-  // TODO add real tests for bitmap index
-  @Test
-  public void testBitmapSize() throws IOException {
-    Set<Long> positions = generatePositions();
-    String content = LogReaderUtils.encodePositions(positions);
-    Roaring64NavigableMap roaring64NavigableMap = LogReaderUtils.decodeRecordPositionsHeader(content);
-
-    System.out.println(Base64CodecUtil.decode(LogReaderUtils.encodePositions(roaring64NavigableMap)).length);
-    roaring64NavigableMap.runOptimize();
-    System.out.println(roaring64NavigableMap.getSizeInBytes());
-  }
 
   @Test
   public void testEncodeAndDecodePositions() throws IOException {

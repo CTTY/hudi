@@ -208,7 +208,7 @@ public class BitmapIndexRecordGenerationUtils {
       if (!recordKeyToColInfoForPreviousFileSlice.containsKey(recordKey)) {
         // new record, update bitmap for every indexed columns
         newPositionedColumnInfo.columnInfos.forEach((column, colVal) ->
-          addPosToBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, newPositionedColumnInfo.pos));
+                addPosToBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, newPositionedColumnInfo.pos));
       } else {
         // update existing record, only update bitmap for changed columns
         PositionedColumnInfo oldPositionedColumnInfo = recordKeyToColInfoForPreviousFileSlice.get(recordKey);
@@ -228,7 +228,7 @@ public class BitmapIndexRecordGenerationUtils {
       if (!recordKeyToColInfoForCurrentFileSlice.containsKey(recordKey)) {
         // deleted record, remove positions from all associated bitmaps
         oldPositionedColumnInfo.columnInfos.forEach((column, colVal) ->
-          removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, oldPositionedColumnInfo.pos));
+                removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, oldPositionedColumnInfo.pos));
       }
     });
 

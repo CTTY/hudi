@@ -41,7 +41,8 @@ import org.apache.hudi.storage.StoragePath
 import org.apache.hudi.table.HoodieSparkTable
 import org.apache.hudi.testutils.SparkClientFunctionalTestHarness
 import org.apache.hudi.testutils.SparkClientFunctionalTestHarness.getSparkSqlConf
-import org.apache.hudi.util.{JFunction, JavaConversions}
+import org.apache.hudi.util.{JavaConversions, JFunction}
+
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
@@ -55,6 +56,7 @@ import org.roaringbitmap.longlong.Roaring64NavigableMap
 import org.scalatest.Assertions.{assertResult, assertThrows}
 
 import java.util.concurrent.Executors
+
 import scala.collection.JavaConverters
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._

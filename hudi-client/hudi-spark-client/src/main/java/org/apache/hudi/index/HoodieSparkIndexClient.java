@@ -62,7 +62,6 @@ import static org.apache.hudi.common.config.HoodieMetadataConfig.ENABLE_METADATA
 import static org.apache.hudi.common.config.HoodieMetadataConfig.RECORD_INDEX_ENABLE_PROP;
 import static org.apache.hudi.index.HoodieIndexUtils.indexExists;
 import static org.apache.hudi.index.HoodieIndexUtils.register;
-import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BLOOM_FILTERS;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_COLUMN_STATS;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_RECORD_INDEX;

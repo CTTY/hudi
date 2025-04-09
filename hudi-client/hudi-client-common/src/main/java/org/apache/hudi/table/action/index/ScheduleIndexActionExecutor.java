@@ -131,7 +131,6 @@ public class ScheduleIndexActionExecutor<T, I, K, O> extends BaseActionExecutor<
     return Option.empty();
   }
 
-  // TODO probably need to refactor this or move this to HoodieTableMetadataUtil
   private HoodieIndexPartitionInfo buildIndexPartitionInfo(MetadataPartitionType partitionType, HoodieInstant indexUptoInstant) {
     String partitionName = partitionType.getPartitionPath();
     HoodieMetadataConfig metadataConfig = config.getMetadataConfig();
@@ -142,7 +141,6 @@ public class ScheduleIndexActionExecutor<T, I, K, O> extends BaseActionExecutor<
     if (MetadataPartitionType.SECONDARY_INDEX.equals(partitionType)) {
       partitionName = getSecondaryOrExpressionIndexName(metadataConfig::getSecondaryIndexName, PARTITION_NAME_SECONDARY_INDEX_PREFIX, metadataConfig.getSecondaryIndexColumn());
     }
-
     return new HoodieIndexPartitionInfo(LATEST_INDEX_PLAN_VERSION, partitionName, indexUptoInstant.requestedTime(), Collections.emptyMap());
   }
 

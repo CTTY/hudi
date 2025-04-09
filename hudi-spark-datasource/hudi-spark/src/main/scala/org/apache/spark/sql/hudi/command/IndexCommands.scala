@@ -75,7 +75,7 @@ case class CreateIndexCommand(table: CatalogTable,
         HoodieTableMetadataUtil.PARTITION_NAME_SECONDARY_INDEX
       }
       // TODO investigate how to use this codepath
-      //      val derivedIndexType = HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX
+      //  need to be able to CREATE INDEX for bitmap index
       new HoodieSparkIndexClient(sparkSession).create(metaClient, indexName, derivedIndexType, columnsMap, options.asJava, table.properties.asJava)
     } else {
       throw new HoodieIndexException(String.format("%s is not supported", indexType))
