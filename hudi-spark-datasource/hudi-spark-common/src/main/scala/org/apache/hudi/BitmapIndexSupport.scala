@@ -69,7 +69,7 @@ class BitmapIndexSupport(spark: SparkSession,
     val equalToArray = ArrayBuffer[EqualTo]()
     val notEqualToArray = ArrayBuffer[EqualTo]()
 
-    // TODO consider if there are other filters we can match
+    // TODO consider if we should support IN as well
     queryFilters.foreach {
       case eq @ EqualTo(left: AttributeReference, _: Literal) if intersectedColumns.contains(left.name) =>
         equalToArray += eq

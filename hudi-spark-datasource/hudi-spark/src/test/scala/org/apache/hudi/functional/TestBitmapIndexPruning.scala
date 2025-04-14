@@ -36,13 +36,12 @@ import org.apache.hudi.config._
 import org.apache.hudi.exception.{HoodieMetadataIndexException, HoodieWriteConflictException}
 import org.apache.hudi.functional.TestSecondaryIndexPruning.SecondaryIndexTestCase
 import org.apache.hudi.metadata._
-import org.apache.hudi.metadata.HoodieMetadataPayload.SECONDARY_INDEX_RECORD_KEY_SEPARATOR
+import org.apache.hudi.metadata.HoodieMetadataPayload.{BITMAP_INDEX_RECORD_KEY_SEPARATOR, SECONDARY_INDEX_RECORD_KEY_SEPARATOR}
 import org.apache.hudi.storage.StoragePath
 import org.apache.hudi.table.HoodieSparkTable
 import org.apache.hudi.testutils.SparkClientFunctionalTestHarness
 import org.apache.hudi.testutils.SparkClientFunctionalTestHarness.getSparkSqlConf
-import org.apache.hudi.util.{JavaConversions, JFunction}
-
+import org.apache.hudi.util.{JFunction, JavaConversions}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
@@ -56,7 +55,6 @@ import org.roaringbitmap.longlong.Roaring64NavigableMap
 import org.scalatest.Assertions.{assertResult, assertThrows}
 
 import java.util.concurrent.Executors
-
 import scala.collection.JavaConverters
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._
@@ -222,9 +220,9 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     verifyQueryPredicate(hudiOpts, "ts")
   }
 
-  @Test
-  def testInitializeBitmapIndex(): Unit = {
-    val hoodieTableType = HoodieTableType.COPY_ON_WRITE
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType])
+  def testInitializeBitmapIndex(hoodieTableType: HoodieTableType): Unit = {
     val tableType = hoodieTableType.name()
     val isPartitioned = true
     var hudiOpts = commonOpts
@@ -269,29 +267,76 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
       .setBasePath(basePath)
       .setConf(HoodieTestUtils.getDefaultStorageConf)
       .build()
-    //    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
-    // validate the secondary index records themselves
-    //    checkAnswer(s"select key from hudi_metadata('$basePath') where type=8")(
-    //      Seq(s"abc${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row1"),
-    //      Seq(s"cde${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row2"),
-    //      Seq(s"def${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row3")
-    //    )
-    println("shawn: printing metadata")
-    spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60, false)
-    println("shawn: printed metadata")
-    // validate data skipping with filters on secondary key column
-    spark.sql("set hoodie.metadata.enable=true")
-    spark.sql("set hoodie.enable.data.skipping=true")
-    spark.sql("set hoodie.fileIndex.dataSkippingFailureMode=strict")
-    checkAnswer(s"select ts, record_key_col, not_record_key_col, partition_key_col from $tableName where not_record_key_col = 'abc' and record_key_col != 'row2'")(
-      Seq(1, "row1", "abc", "p1")
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
+    checkContains(s"select key from hudi_metadata('$basePath') where type=8")(
+      s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}abc${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1",
+      s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}cde${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2",
+      s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}def${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
     )
-    //    verifyQueryPredicate(hudiOpts, "not_record_key_col")
   }
 
-  @Test
-  def testBitmapIndexWithUpdate(): Unit = {
-    val hoodieTableType = HoodieTableType.COPY_ON_WRITE
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType])
+  def testInitializeBitmapIndexWithExistingData(hoodieTableType: HoodieTableType): Unit = {
+    //    val hoodieTableType = HoodieTableType.COPY_ON_WRITE
+    val tableType = hoodieTableType.name()
+    val isPartitioned = true
+    var hudiOpts = commonOpts
+    hudiOpts = hudiOpts ++ Map(
+      DataSourceWriteOptions.TABLE_TYPE.key -> tableType,
+      DataSourceReadOptions.ENABLE_DATA_SKIPPING.key -> "true")
+    val sqlTableType = if (tableType.equals(HoodieTableType.COPY_ON_WRITE.name())) "cow" else "mor"
+    tableName += "test_bitmap_index_with_filters" + (if (isPartitioned) "_partitioned" else "") + sqlTableType
+    val partitionedByClause = if (isPartitioned) "partitioned by(partition_key_col)" else ""
+
+    spark.sql(
+      s"""
+         |create table $tableName (
+         |  ts bigint,
+         |  record_key_col string,
+         |  not_record_key_col string,
+         |  partition_key_col string
+         |) using hudi
+         | options (
+         |  primaryKey ='record_key_col',
+         |  type = '$sqlTableType',
+         |  hoodie.metadata.enable = 'true',
+         |  hoodie.metadata.record.index.enable = 'true',
+         |  hoodie.datasource.write.recordkey.field = 'record_key_col',
+         |  hoodie.enable.data.skipping = 'true',
+         |  hoodie.datasource.write.payload.class = "org.apache.hudi.common.model.OverwriteWithLatestAvroPayload"
+         | )
+         | $partitionedByClause
+         | location '$basePath'
+       """.stripMargin)
+    // by setting small file limit to 0, each insert will create a new file
+    // need to generate more file for non-partitioned table to test data skipping
+    // as the partitioned table will have only one file per partition
+    spark.sql("set hoodie.parquet.small.file.limit=0")
+    spark.sql(s"insert into $tableName values(1, 'row1', 'abc', 'p1')")
+    spark.sql(s"insert into $tableName values(2, 'row2', 'cde', 'p2')")
+    spark.sql(s"insert into $tableName values(3, 'row3', 'def', 'p2')")
+    spark.sql("set hoodie.metadata.index.bitmap.enable=true")
+    spark.sql("set hoodie.metadata.index.bitmap.column.list=not_record_key_col")
+    spark.sql(s"insert into $tableName values(4, 'row4', 'ghi', 'p1')")
+
+    // validate index created successfully
+    metaClient = HoodieTableMetaClient.builder()
+      .setBasePath(basePath)
+      .setConf(HoodieTestUtils.getDefaultStorageConf)
+      .build()
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
+    checkContains(s"select key from hudi_metadata('$basePath') where type=8")(
+      s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}abc${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1",
+      s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}cde${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2",
+      s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}def${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2",
+      s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}ghi${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1"
+    )
+  }
+
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType])
+  def testBitmapIndexWithUpdate(hoodieTableType: HoodieTableType): Unit = {
     val tableType = hoodieTableType.name()
     val isPartitioned = true
     var hudiOpts = commonOpts
@@ -333,45 +378,127 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     spark.sql(s"insert into $tableName values(3, 'row3', 'def', 'p2')")
     spark.sql(s"update $tableName set not_record_key_col='xyz' where record_key_col='row3'")
 
+    val recordPrefix_abc = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}abc${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1"
+    val recordPrefix_cde = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}cde${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_def = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}def${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_xyz = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}xyz${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+
     // validate index created successfully
     metaClient = HoodieTableMetaClient.builder()
       .setBasePath(basePath)
       .setConf(HoodieTestUtils.getDefaultStorageConf)
       .build()
-    //    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
-    // validate the secondary index records themselves
-    //    checkAnswer(s"select key from hudi_metadata('$basePath') where type=8")(
-    //      Seq(s"abc${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row1"),
-    //      Seq(s"cde${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row2"),
-    //      Seq(s"def${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row3")
-    //    )
-    println("shawn: printing metadata")
-    spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60, false)
-    println("shawn: printed metadata after update")
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
+    // validate the bitmap index records themselves
+    checkContains(s"select key from hudi_metadata('$basePath') where type=8")(
+      recordPrefix_abc,
+      recordPrefix_cde,
+      recordPrefix_def, // although updated, the bitmap record won't be removed
+      recordPrefix_xyz
+    )
 
-    // TODO delete is not working! need to fix
-    spark.sql(s"delete from $tableName where record_key_col='row3'")
-
-    println("shawn: printing metadata")
-    spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60, false)
-    println("shawn: printed metadata after delete")
-
+    // verify bitmap's cardinality
     val metadataConfig = HoodieMetadataConfig.newBuilder()
       .withProperties(metaClient.getTableConfig.getProps)
       .enableBitmapIndex()
       .withBitmapIndexColumns(spark.sessionState.conf.getConfString(HoodieMetadataConfig.BITMAP_INDEX_FOR_COLUMNS.key()))
       .build()
-    val metadataTable = HoodieTableMetadata.create(new HoodieSparkEngineContext(jsc), metaClient.getStorage, metadataConfig, basePath)
-    val bitmap1 = getBitmapWithPrefix(metadataTable, "not_record_key_col$def$partition_key_col=p2$") // prefix
-    val bitmap2 = getBitmapWithPrefix(metadataTable, "not_record_key_col$xyz$partition_key_col=p2$") // prefix
-    val bitmap3 = getBitmapWithPrefix(metadataTable, "not_record_key_col$abc$partition_key_col=p1$") // prefix
-    val bitmap4 = getBitmapWithPrefix(metadataTable, "not_record_key_col$cde$partition_key_col=p2$") // prefix
+    val metadata = HoodieTableMetadata.create(new HoodieSparkEngineContext(jsc), metaClient.getStorage, metadataConfig, basePath)
+    checkCardinality(metadata, recordPrefix_abc)(1)
+    checkCardinality(metadata, recordPrefix_cde)(1)
+    checkCardinality(metadata, recordPrefix_def)(0)
+    checkCardinality(metadata, recordPrefix_xyz)(1)
 
+    checkContains(s"select key from hudi_metadata('$basePath') where type=8")(
+      recordPrefix_abc,
+      recordPrefix_cde, // although deleted, the record won't be removed
+      recordPrefix_def,
+      recordPrefix_xyz
+    )
 
-    println(s"yxchang: after delete def cardinality: ${bitmap1.getIntCardinality}")
-    println(s"yxchang: after delete xyz cardinality: ${bitmap2.getIntCardinality}")
-    println(s"yxchang: after delete abc cardinality: ${bitmap3.getIntCardinality}")
-    println(s"yxchang: after delete cde cardinality: ${bitmap4.getIntCardinality}")
+    checkCardinality(metadata, recordPrefix_abc)(1)
+    checkCardinality(metadata, recordPrefix_cde)(0)
+    checkCardinality(metadata, recordPrefix_def)(0)
+    checkCardinality(metadata, recordPrefix_xyz)(1)
+  }
+
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType])
+  def testBitmapIndexWithMultipleIndexColumns(hoodieTableType: HoodieTableType): Unit = {
+    val tableType = hoodieTableType.name()
+    val isPartitioned = true
+    var hudiOpts = commonOpts
+    hudiOpts = hudiOpts ++ Map(
+      DataSourceWriteOptions.TABLE_TYPE.key -> tableType,
+      DataSourceReadOptions.ENABLE_DATA_SKIPPING.key -> "true")
+    val sqlTableType = if (tableType.equals(HoodieTableType.COPY_ON_WRITE.name())) "cow" else "mor"
+    tableName += "test_bitmap_index_with_filters" + (if (isPartitioned) "_partitioned" else "") + sqlTableType
+    val partitionedByClause = if (isPartitioned) "partitioned by(partition_key_col)" else ""
+
+    spark.sql(
+      s"""
+         |create table $tableName (
+         |  ts bigint,
+         |  record_key_col string,
+         |  not_record_key_col string,
+         |  another_col string,
+         |  partition_key_col string
+         |) using hudi
+         | options (
+         |  primaryKey ='record_key_col',
+         |  type = '$sqlTableType',
+         |  hoodie.metadata.enable = 'true',
+         |  hoodie.metadata.record.index.enable = 'true',
+         |  hoodie.datasource.write.recordkey.field = 'record_key_col',
+         |  hoodie.enable.data.skipping = 'true',
+         |  hoodie.datasource.write.payload.class = "org.apache.hudi.common.model.OverwriteWithLatestAvroPayload"
+         | )
+         | $partitionedByClause
+         | location '$basePath'
+       """.stripMargin)
+    // by setting small file limit to 0, each insert will create a new file
+    // need to generate more file for non-partitioned table to test data skipping
+    // as the partitioned table will have only one file per partition
+    spark.sql("set hoodie.parquet.small.file.limit=0")
+    spark.sql("set hoodie.metadata.index.bitmap.enable=true")
+    spark.sql("set hoodie.metadata.index.bitmap.column.list=not_record_key_col,another_col")
+    spark.sql(s"insert into $tableName values(1, 'row1', 'abc', 'another_row1', 'p1')")
+    spark.sql(s"insert into $tableName values(2, 'row2', 'cde', 'another_row2', 'p2')")
+    spark.sql(s"insert into $tableName values(3, 'row3', 'def', 'another_row3', 'p2')")
+    spark.sql(s"update $tableName set not_record_key_col='xyz' where record_key_col='row3'")
+
+    val recordPrefix_abc = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}abc${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1"
+    val recordPrefix_row1 = s"another_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}another_row1${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1"
+    val recordPrefix_cde = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}cde${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_row2 = s"another_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}another_row2${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_def = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}def${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_row3 = s"another_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}another_row3${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_xyz = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}xyz${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+
+    // validate index created successfully
+    metaClient = HoodieTableMetaClient.builder()
+      .setBasePath(basePath)
+      .setConf(HoodieTestUtils.getDefaultStorageConf)
+      .build()
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
+    assertResult(7L)(spark.sql(s"select * from hudi_metadata('$basePath') where type=8").count())
+
+    // verify bitmap's cardinality
+    val metadataConfig = HoodieMetadataConfig.newBuilder()
+      .withProperties(metaClient.getTableConfig.getProps)
+      .enableBitmapIndex()
+      .withBitmapIndexColumns(spark.sessionState.conf.getConfString(HoodieMetadataConfig.BITMAP_INDEX_FOR_COLUMNS.key()))
+      .build()
+    val metadata = HoodieTableMetadata.create(new HoodieSparkEngineContext(jsc), metaClient.getStorage, metadataConfig, basePath)
+    checkCardinality(metadata, recordPrefix_abc)(1)
+    checkCardinality(metadata, recordPrefix_cde)(1)
+    checkCardinality(metadata, recordPrefix_def)(0)
+    checkCardinality(metadata, recordPrefix_xyz)(1)
+
+    // same row should have the same cardinality and positions
+    checkBitmapPositions(getBitmapWithPrefix(metadata, recordPrefix_abc), getBitmapWithPrefix(metadata, recordPrefix_row1))
+    checkBitmapPositions(getBitmapWithPrefix(metadata, recordPrefix_cde), getBitmapWithPrefix(metadata, recordPrefix_row2))
+    checkBitmapPositions(getBitmapWithPrefix(metadata, recordPrefix_xyz), getBitmapWithPrefix(metadata, recordPrefix_row3))
   }
 
   @Test
@@ -1948,6 +2075,25 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     assertResult(expects.map(row => Row(row: _*)).toArray.sortBy(_.toString()))(spark.sql(query).collect().sortBy(_.toString()))
   }
 
+  private def checkContains(query: String)(expectedSubstrs: String*): Unit = {
+    val queryRes = spark.sql(query).collect().sortBy(_.toString()).map(_.toString())
+    assertResult(expectedSubstrs.size)(queryRes.length)
+
+    queryRes.zip(expectedSubstrs).foreach {
+      case (value: String, substr: String) => assertTrue(value.contains(substr))
+    }
+  }
+
+  private def checkCardinality(metadata: HoodieTableMetadata, recordKeyPrefix: String)(expectedCardinality: Int): Unit = {
+    val bitmap = getBitmapWithPrefix(metadata, recordKeyPrefix)
+    assertResult(expectedCardinality)(bitmap.getIntCardinality)
+  }
+
+  private def checkBitmapPositions(bitmap1: Roaring64NavigableMap, bitmap2: Roaring64NavigableMap): Unit = {
+    assertResult(bitmap1.getLongCardinality)(bitmap2.getLongCardinality)
+    bitmap1.forEach(pos => assertTrue(bitmap2.contains(pos)))
+  }
+
   private def verifyQueryPredicate(hudiOpts: Map[String, String], columnName: String, nonExistentKey: String = ""): Unit = {
     mergedDfList = mergedDfList :+ spark.read.format("hudi").options(hudiOpts).load(basePath).repartition(1).cache()
     val secondaryKey = mergedDfList.last.limit(2).collect().filter(row => !row.getAs(columnName).toString.equals(nonExistentKey))
@@ -2009,12 +2155,13 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
   private def getBitmapWithPrefix(metadataTable: HoodieTableMetadata, prefix: String): Roaring64NavigableMap = {
     val bitmapKeyList = new java.util.ArrayList[String]
     bitmapKeyList.add(prefix)
-    metadataTable
+    val list = metadataTable
       .getRecordsByKeyPrefixes(bitmapKeyList, MetadataPartitionType.BITMAP_INDEX.getPartitionPath, false)
       .map(record =>
         LogReaderUtils.decodeRecordPositionsHeader(record.getData.getBitmapIndexMetadata.get().getBitmap))
       .collectAsList()
-      .get(0)
+    assert(list.size() == 1)
+    list.get(0)
   }
 }
 
