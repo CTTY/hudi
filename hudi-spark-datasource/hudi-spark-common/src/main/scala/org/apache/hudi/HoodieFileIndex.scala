@@ -403,7 +403,7 @@ case class HoodieFileIndex(spark: SparkSession,
         if (indexSupport.isIndexAvailable && indexSupport.supportsQueryType(options)) {
           val prunedFileNames = indexSupport.computeCandidateIsStrict(spark, this, queryFilters, queryReferencedColumns,
             prunedPartitionsAndFileSlices, shouldPushDownFilesFilter)
-          if (prunedFileNames.nonEmpty) {
+          if (prunedFileNames.nonEmpty && prunedFileNames.get.nonEmpty) {
             return Try(prunedFileNames)
           }
         }

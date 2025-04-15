@@ -22,17 +22,16 @@ import org.apache.hudi.common.config.HoodieMetadataConfig
 import org.apache.hudi.common.model.{FileSlice, HoodieLogFile}
 import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.table.log.LogReaderUtils
+import org.apache.hudi.common.util.StringUtils
 import org.apache.hudi.metadata.{HoodieTableMetadataUtil, MetadataPartitionType}
 import org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.constructBitmapRecordKey
 import org.apache.hudi.util.JavaScalaConverters
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal, Not}
 import org.roaringbitmap.longlong.Roaring64NavigableMap
 import org.slf4j.LoggerFactory
 
 import java.util.stream.Collectors
-
 import scala.collection.mutable.ArrayBuffer
 
 class BitmapIndexSupport(spark: SparkSession,
@@ -81,7 +80,12 @@ class BitmapIndexSupport(spark: SparkSession,
     }
 
     val candidateFileNames: Set[String] = prunedPartitionsAndFileSlices.flatMap(pair => {
-      val partition: String = pair._1.map(_.path).getOrElse(".")
+      val partition: String = pair._1.map(partitionPath => {
+        if (StringUtils.isNullOrEmpty(partitionPath.getPath)) {
+          "." // TODO maybe import NON_PARTITIONED_NAME from HoodieTableMetadata
+        } else {
+          partitionPath.getPath
+        }}).getOrElse(".")
       val fileSlices: Seq[FileSlice] = pair._2
       // determine if the entire file slice is a candidate
       val fileId = fileSlices.head.getFileId
