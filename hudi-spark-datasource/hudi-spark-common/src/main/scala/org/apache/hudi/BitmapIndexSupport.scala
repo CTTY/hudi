@@ -63,23 +63,20 @@ class BitmapIndexSupport(spark: SparkSession,
       prunedPartitionsAndFileSlices.flatMap(pair => getAllFileNames(pair._2)).toSet
     }
 
-    // bitmap index should filter on EqualTo NotEqualTo
+    // bitmap index should filter on EqualTo
     // construct keys and use the keys to search for bitmaps optimistically
     // query should be providing column name and column values
     val equalToArray = ArrayBuffer[EqualTo]()
-    val notEqualToArray = ArrayBuffer[EqualTo]()
 
     // TODO consider if we should support IN as well
     queryFilters.foreach {
       case eq @ EqualTo(left: AttributeReference, _: Literal) if intersectedColumns.contains(left.name) =>
         equalToArray += eq
-      case Not(child @ EqualTo(left: AttributeReference, _: Literal)) if intersectedColumns.contains(left.name) =>
-        notEqualToArray += child
       case _ =>
     }
 
-    if (equalToArray.isEmpty && notEqualToArray.isEmpty) {
-      log.debug(s"No EqualTo or NotEqualTo query filters to utilize bitmap index, skip pruning")
+    if (equalToArray.isEmpty) {
+      log.debug(s"No EqualTo query filters to utilize bitmap index, skip pruning")
       prunedPartitionsAndFileSlices.flatMap(pair => getAllFileNames(pair._2)).toSet
     }
 
@@ -89,8 +86,7 @@ class BitmapIndexSupport(spark: SparkSession,
       // determine if the entire file slice is a candidate
       val fileId = fileSlices.head.getFileId
       var bitmap: Roaring64NavigableMap = null
-      bitmap = checkEqualTo(bitmap, equalToArray, notEqualTo = false, partition, fileId)
-      bitmap = checkEqualTo(bitmap, notEqualToArray, notEqualTo = true, partition, fileId)
+      bitmap = checkEqualTo(bitmap, equalToArray, partition, fileId)
       if (bitmap.getIntCardinality > 0) {
         // is a candidate
         // get all filenames in the file slice
@@ -110,7 +106,6 @@ class BitmapIndexSupport(spark: SparkSession,
 
   private def checkEqualTo(bitmap: Roaring64NavigableMap,
                            equalToArray: ArrayBuffer[EqualTo],
-                           notEqualTo: Boolean,
                            partition: String,
                            fileId: String): Roaring64NavigableMap = {
     var varBitmap = bitmap
@@ -127,11 +122,7 @@ class BitmapIndexSupport(spark: SparkSession,
         // try joining bitmaps
         val another = getBitmapFromMetadataTable(bitmapKeyList)
         if (another != null) {
-          if (notEqualTo) {
-            varBitmap.andNot(another)
-          } else {
-            varBitmap.and(another)
-          }
+          varBitmap.and(another)
         }
       }
     }
@@ -140,12 +131,17 @@ class BitmapIndexSupport(spark: SparkSession,
 
   private def getBitmapFromMetadataTable(bitmapKeyList: java.util.ArrayList[String]): Roaring64NavigableMap = {
     // TODO maybe add try-catch here and skip if bitmap is not found
-    metadataTable
+    val bitmapList = metadataTable
       .getRecordsByKeyPrefixes(bitmapKeyList, MetadataPartitionType.BITMAP_INDEX.getPartitionPath, false)
       .map(record =>
         LogReaderUtils.decodeRecordPositionsHeader(record.getData.getBitmapIndexMetadata.get().getBitmap))
       .collectAsList()
-      .get(0)
+    if (bitmapList.isEmpty || bitmapList.size() > 1) {
+      log.warn(s"Expected to get exactly bitmap, but got ${bitmapList.size()}, returning an empty bitmap")
+      new Roaring64NavigableMap()
+    } else {
+      bitmapList.get(0)
+    }
   }
 
   private def getAllFileNames(fileSlices: Seq[FileSlice]): Seq[String] = {

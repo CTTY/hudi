@@ -44,7 +44,7 @@ import org.apache.hudi.testutils.SparkClientFunctionalTestHarness.getSparkSqlCon
 import org.apache.hudi.util.{JFunction, JavaConversions}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal, Not}
 import org.apache.spark.sql.types.StringType
 import org.junit.jupiter.api.{Tag, Test}
 import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
@@ -501,9 +501,9 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     checkBitmapPositions(getBitmapWithPrefix(metadata, recordPrefix_xyz), getBitmapWithPrefix(metadata, recordPrefix_row3))
   }
 
-  @Test
-  def testBitmapIndexWithFilters(): Unit = {
-    val hoodieTableType = HoodieTableType.COPY_ON_WRITE
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType])
+  def testBitmapIndexWithFilters(hoodieTableType: HoodieTableType): Unit = {
     val tableType = hoodieTableType.name()
     val isPartitioned = true
     var hudiOpts = commonOpts
@@ -538,35 +538,29 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     // need to generate more file for non-partitioned table to test data skipping
     // as the partitioned table will have only one file per partition
     spark.sql("set hoodie.parquet.small.file.limit=0")
+    spark.sql("set hoodie.metadata.index.bitmap.enable=true")
+    spark.sql("set hoodie.metadata.index.bitmap.column.list=not_record_key_col,another_col")
     spark.sql(s"insert into $tableName values(1, 'row1', 'abc', 'p1')")
     spark.sql(s"insert into $tableName values(2, 'row2', 'cde', 'p2')")
     spark.sql(s"insert into $tableName values(3, 'row3', 'def', 'p2')")
-    // create bitmap index
-    // TODO add syntax to add bitmap index
-    spark.sql(s"create index idx_not_record_key_col on $tableName (not_record_key_col)")
+
     // validate index created successfully
     metaClient = HoodieTableMetaClient.builder()
       .setBasePath(basePath)
       .setConf(HoodieTestUtils.getDefaultStorageConf)
       .build()
-//    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
-    // validate the secondary index records themselves
-    //    checkAnswer(s"select key from hudi_metadata('$basePath') where type=8")(
-    //      Seq(s"abc${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row1"),
-    //      Seq(s"cde${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row2"),
-    //      Seq(s"def${SECONDARY_INDEX_RECORD_KEY_SEPARATOR}row3")
-    //    )
-    println("shawn: printing metadata")
-    spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(60)
-    println("shawn: printed metadata")
-    // validate data skipping with filters on secondary key column
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
+
+    // validate data skipping with filters on bitmap indexed column
     spark.sql("set hoodie.metadata.enable=true")
     spark.sql("set hoodie.enable.data.skipping=true")
     spark.sql("set hoodie.fileIndex.dataSkippingFailureMode=strict")
     checkAnswer(s"select ts, record_key_col, not_record_key_col, partition_key_col from $tableName where not_record_key_col = 'abc'")(
       Seq(1, "row1", "abc", "p1")
     )
-    verifyQueryPredicate(hudiOpts, "not_record_key_col")
+    verifyBitmapQueryPredicate(hudiOpts = hudiOpts, Map("not_record_key_col" -> "abc"), 1, 3)
+    // filter on a value that doesn't exist
+    verifyBitmapQueryPredicate(hudiOpts = hudiOpts, Map("not_record_key_col" -> "4399"), 0, 3)
   }
 
   @Test
@@ -2102,6 +2096,20 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     verifyFilePruning(hudiOpts, dataFilter)
   }
 
+  private def verifyBitmapQueryPredicate(hudiOpts: Map[String, String], columnNameValPairs: Map[String, String],
+                                         expectedFilteredCount: Int = -1, expectedCountWithNoSkipping: Int = -1): Unit = {
+    val indexedColumns = columnNameValPairs.keySet.mkString(",")
+    val dataFilters: List[Expression] = columnNameValPairs
+      .map(column => EqualTo(attribute(column._1), Literal(column._2)))
+      .toList
+    verifyFilePruning(
+      hudiOpts +
+        (HoodieMetadataConfig.BITMAP_INDEX_FOR_COLUMNS.key -> indexedColumns,
+          HoodieMetadataConfig.BITMAP_INDEX_ENABLE_PROP.key -> "true"),
+      dataFilters,
+      expectedFilteredCount, expectedCountWithNoSkipping)
+  }
+
   private def attribute(partition: String): AttributeReference = {
     AttributeReference(partition, StringType, nullable = true)()
   }
@@ -2120,6 +2128,26 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     fileIndex = HoodieFileIndex(spark, metaClient, None, commonOpts + (DataSourceReadOptions.ENABLE_DATA_SKIPPING.key -> "false"), includeLogFiles = true)
     val filesCountWithNoSkipping = fileIndex.listFiles(Seq(), Seq(dataFilter)).flatMap(s => s.files).size
     assertTrue(filesCountWithNoSkipping == latestDataFilesCount)
+    fileIndex.close()
+  }
+
+  private def verifyFilePruning(opts: Map[String, String], dataFilters: Seq[Expression],
+                                expectedFilteredCount: Int = -1, expectedCountWithNoSkipping: Int = -1): Unit = {
+    // with data skipping
+    val commonOpts = opts + ("path" -> basePath)
+    metaClient = HoodieTableMetaClient.reload(metaClient)
+    var fileIndex = HoodieFileIndex(spark, metaClient, None, commonOpts, includeLogFiles = true)
+    val filteredPartitionDirectories = fileIndex.listFiles(Seq(), dataFilters)
+    val filteredFilesCount = filteredPartitionDirectories.flatMap(s => s.files).size
+    val latestDataFilesCount = getLatestDataFilesCount(opts)
+    assertTrue(filteredFilesCount <= latestDataFilesCount)
+    if (expectedFilteredCount != -1) assertEquals(expectedFilteredCount, filteredFilesCount)
+
+    // with no data skipping
+    fileIndex = HoodieFileIndex(spark, metaClient, None, commonOpts + (DataSourceReadOptions.ENABLE_DATA_SKIPPING.key -> "false"), includeLogFiles = true)
+    val filesCountWithNoSkipping = fileIndex.listFiles(Seq(), dataFilters).flatMap(s => s.files).size
+    assertEquals(filesCountWithNoSkipping, latestDataFilesCount)
+    if (expectedCountWithNoSkipping != -1) assertEquals(expectedCountWithNoSkipping, filesCountWithNoSkipping)
     fileIndex.close()
   }
 

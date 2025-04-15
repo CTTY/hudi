@@ -432,8 +432,6 @@ public final class HoodieMetadataConfig extends HoodieConfig {
           .defaultValue(false)
           .sinceVersion("1.1.0");
 
-  public static final ConfigProperty<String> BITMAP_INDEX_NAME = HoodieIndexingConfig.INDEX_NAME;
-
   public static final ConfigProperty<String> BITMAP_INDEX_FOR_COLUMNS = ConfigProperty
           .key(METADATA_PREFIX + ".index.bitmap.column.list")
           .noDefaultValue()
