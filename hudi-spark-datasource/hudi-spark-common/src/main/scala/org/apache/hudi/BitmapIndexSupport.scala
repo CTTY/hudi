@@ -26,12 +26,14 @@ import org.apache.hudi.common.util.StringUtils
 import org.apache.hudi.metadata.{HoodieTableMetadataUtil, MetadataPartitionType}
 import org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.constructBitmapRecordKey
 import org.apache.hudi.util.JavaScalaConverters
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal, Not}
 import org.roaringbitmap.longlong.Roaring64NavigableMap
 import org.slf4j.LoggerFactory
 
 import java.util.stream.Collectors
+
 import scala.collection.mutable.ArrayBuffer
 
 class BitmapIndexSupport(spark: SparkSession,
@@ -79,6 +81,9 @@ class BitmapIndexSupport(spark: SparkSession,
       prunedPartitionsAndFileSlices.flatMap(pair => getAllFileNames(pair._2)).toSet
     }
 
+    var processedFileSlices: Double = 0
+    var prunedFileSlices: Double = 0
+
     val candidateFileNames: Set[String] = prunedPartitionsAndFileSlices.flatMap(pair => {
       val partition: String = pair._1.map(partitionPath => {
         if (StringUtils.isNullOrEmpty(partitionPath.getPath)) {
@@ -89,17 +94,21 @@ class BitmapIndexSupport(spark: SparkSession,
       val fileSlices: Seq[FileSlice] = pair._2
       // determine if the entire file slice is a candidate
       val fileId = fileSlices.head.getFileId
-      var bitmap: Roaring64NavigableMap = null
-      bitmap = checkEqualTo(bitmap, equalToArray, partition, fileId)
+      val bitmap: Roaring64NavigableMap = checkEqualTo(equalToArray, partition, fileId)
+      processedFileSlices += 1
       if (bitmap.getIntCardinality > 0) {
         // is a candidate
         // get all filenames in the file slice
         getAllFileNames(fileSlices)
       } else {
         // eliminate this file slice
+        prunedFileSlices += 1
         Array.empty[String]
       }
     }).toSet
+
+    log.info(s"Good news! Bitmap index has pruned ${prunedFileSlices} file slices out of ${processedFileSlices} file slices, " +
+      s"the pruning ratio is ${prunedFileSlices/processedFileSlices}")
 
     Option(candidateFileNames)
   }
@@ -108,11 +117,10 @@ class BitmapIndexSupport(spark: SparkSession,
     // do nothing
   }
 
-  private def checkEqualTo(bitmap: Roaring64NavigableMap,
-                           equalToArray: ArrayBuffer[EqualTo],
+  private def checkEqualTo(equalToArray: ArrayBuffer[EqualTo],
                            partition: String,
                            fileId: String): Roaring64NavigableMap = {
-    var varBitmap = bitmap
+    var varBitmap: Roaring64NavigableMap = null
     for (eq: EqualTo <- equalToArray) {
       val colName = eq.left.asInstanceOf[AttributeReference].name
       val colVal = eq.right.asInstanceOf[Literal].toString()
