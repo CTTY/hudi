@@ -323,13 +323,15 @@ public class BitmapIndexRecordGenerationUtils {
                     metaClient.getTableConfig().getProps(), Option.empty(), Option.empty());
     // Collect the records from the iterator in a map by record key to secondary key
     Map<String, PositionedColumnInfo> recordKeyToColumnPairsAndPos = new HashMap<>();
+    long rowPosition = 0L;
     while (fileSliceReader.hasNext()) {
       HoodieRecord record = (HoodieRecord) fileSliceReader.next();
       Map<String, String> columnPairs = getColumnInfos(record, tableSchema, indexedColumns);
       if (columnPairs != null) {
         // no delete records here
-        recordKeyToColumnPairsAndPos.put(record.getRecordKey(tableSchema, HoodieRecord.RECORD_KEY_METADATA_FIELD), new PositionedColumnInfo(columnPairs, record.getCurrentPosition()));
+        recordKeyToColumnPairsAndPos.put(record.getRecordKey(tableSchema, HoodieRecord.RECORD_KEY_METADATA_FIELD), new PositionedColumnInfo(columnPairs, rowPosition));
       }
+      rowPosition++;
     }
     return recordKeyToColumnPairsAndPos;
   }

@@ -96,7 +96,7 @@ class BitmapIndexSupport(spark: SparkSession,
       val fileId = fileSlices.head.getFileId
       val bitmap: Roaring64NavigableMap = checkEqualTo(equalToArray, partition, fileId)
       processedFileSlices += 1
-      if (bitmap.getIntCardinality > 0) {
+      if (bitmap == null || bitmap.getIntCardinality > 0) {
         // is a candidate
         // get all filenames in the file slice
         getAllFileNames(fileSlices)
@@ -107,6 +107,7 @@ class BitmapIndexSupport(spark: SparkSession,
       }
     }).toSet
 
+    // TODO log info clean up
     log.info(s"Good news! Bitmap index has pruned ${prunedFileSlices} file slices out of ${processedFileSlices} file slices, " +
       s"the pruning ratio is ${prunedFileSlices/processedFileSlices}")
 
@@ -149,8 +150,9 @@ class BitmapIndexSupport(spark: SparkSession,
         LogReaderUtils.decodeRecordPositionsHeader(record.getData.getBitmapIndexMetadata.get().getBitmap))
       .collectAsList()
     if (bitmapList.isEmpty || bitmapList.size() > 1) {
-      log.warn(s"Expected to get exactly bitmap, but got ${bitmapList.size()}, returning an empty bitmap")
-      new Roaring64NavigableMap()
+      // TODO revisit the logic here to deal with file that doesn't exist in the bitmap index partition
+      log.warn(s"yxchang: Expected to get exactly one bitmap, but got ${bitmapList.size()} bitmaps, returning null. The key used: ${bitmapKeyList.get(0)}")
+      null
     } else {
       bitmapList.get(0)
     }
