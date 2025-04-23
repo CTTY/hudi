@@ -45,9 +45,6 @@ import java.util.stream.Collectors;
 
 import static org.apache.hudi.avro.HoodieAvroUtils.unwrapAvroValueWrapper;
 import static org.apache.hudi.avro.HoodieAvroUtils.wrapValueIntoAvro;
-// TODO refactor these as metadata config's functions
-import static org.apache.hudi.common.config.HoodieMetadataConfig.BITMAP_INDEX_ENABLE_PROP;
-import static org.apache.hudi.common.util.ConfigUtils.getBooleanWithAltKeys;
 import static org.apache.hudi.common.util.TypeUtils.unsafeCast;
 import static org.apache.hudi.common.util.ValidationUtils.checkArgument;
 import static org.apache.hudi.common.util.ValidationUtils.checkState;
@@ -236,8 +233,8 @@ public enum MetadataPartitionType {
   },
   BITMAP_INDEX(PARTITION_NAME_BITMAP_INDEX, "bitmap-index-", 8) {
     @Override
-    public boolean isMetadataPartitionEnabled(TypedProperties writeConfig) {
-      return getBooleanWithAltKeys(writeConfig, BITMAP_INDEX_ENABLE_PROP);
+    public boolean isMetadataPartitionEnabled(HoodieMetadataConfig metadataConfig) {
+      return metadataConfig.isBitmapIndexEnabled();
     }
 
     @Override
