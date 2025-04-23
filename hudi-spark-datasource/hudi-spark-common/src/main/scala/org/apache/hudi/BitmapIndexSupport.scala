@@ -69,7 +69,6 @@ class BitmapIndexSupport(spark: SparkSession,
     // query should be providing column name and column values
     val equalToArray = ArrayBuffer[EqualTo]()
 
-    // TODO consider if we should support IN as well
     queryFilters.foreach {
       case eq @ EqualTo(left: AttributeReference, _: Literal) if intersectedColumns.contains(left.name) =>
         equalToArray += eq
@@ -96,20 +95,20 @@ class BitmapIndexSupport(spark: SparkSession,
       val fileId = fileSlices.head.getFileId
       val bitmap: Roaring64NavigableMap = checkEqualTo(equalToArray, partition, fileId)
       processedFileSlices += 1
-      if (bitmap == null || bitmap.getIntCardinality > 0) {
-        // is a candidate
-        // get all filenames in the file slice
-        getAllFileNames(fileSlices)
-      } else {
+      if (bitmap == null || bitmap.getIntCardinality <= 0) {
         // eliminate this file slice
         prunedFileSlices += 1
         Array.empty[String]
+      } else {
+        // is a candidate
+        // get all filenames in the file slice
+        getAllFileNames(fileSlices)
       }
     }).toSet
 
-    // TODO log info clean up
-    log.info(s"Good news! Bitmap index has pruned ${prunedFileSlices} file slices out of ${processedFileSlices} file slices, " +
-      s"the pruning ratio is ${prunedFileSlices/processedFileSlices}")
+    val ratio = "%.2f".format(prunedFileSlices/processedFileSlices)
+    log.info(f"Bitmap index has pruned ${prunedFileSlices} file slices out of ${processedFileSlices} file slices, " +
+      f"the pruning ratio is ${ratio}")
 
     Option(candidateFileNames)
   }

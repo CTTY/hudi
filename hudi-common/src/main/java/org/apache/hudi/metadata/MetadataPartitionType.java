@@ -244,7 +244,7 @@ public enum MetadataPartitionType {
     public void constructMetadataPayload(HoodieMetadataPayload payload, GenericRecord record) {
       GenericRecord bitmapIndexRecord = getNestedFieldValue(record, SCHEMA_FIELD_ID_BITMAP_INDEX);
       checkState(bitmapIndexRecord != null, "Valid BitmapIndexMetadata record expected for type: " + MetadataPartitionType.BITMAP_INDEX.getRecordType());
-      payload.bitmapIndexMetadata = new HoodieBitmapIndexInfo((String) bitmapIndexRecord.get(BITMAP_INDEX_FIELD_BITMAP));
+      payload.bitmapIndexMetadata = new HoodieBitmapIndexInfo(bitmapIndexRecord.get(BITMAP_INDEX_FIELD_BITMAP).toString());
     }
   },
   PARTITION_STATS(HoodieTableMetadataUtil.PARTITION_NAME_PARTITION_STATS, "partition-stats-", 6) {

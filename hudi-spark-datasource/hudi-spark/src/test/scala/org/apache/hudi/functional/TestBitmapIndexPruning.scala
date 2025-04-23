@@ -427,17 +427,82 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     checkCardinality(metadata, recordPrefix_cde)(1)
     checkCardinality(metadata, recordPrefix_def)(0)
     checkCardinality(metadata, recordPrefix_xyz)(1)
+  }
 
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType])
+  def testBitmapIndexWithInsert(hoodieTableType: HoodieTableType): Unit = {
+    val tableType = hoodieTableType.name()
+    val isPartitioned = true
+    var hudiOpts = commonOpts
+    hudiOpts = hudiOpts ++ Map(
+      DataSourceWriteOptions.TABLE_TYPE.key -> tableType,
+      DataSourceReadOptions.ENABLE_DATA_SKIPPING.key -> "true")
+    val sqlTableType = if (tableType.equals(HoodieTableType.COPY_ON_WRITE.name())) "cow" else "mor"
+    tableName += "test_bitmap_index_with_filters" + (if (isPartitioned) "_partitioned" else "") + sqlTableType
+    val partitionedByClause = if (isPartitioned) "partitioned by(partition_key_col)" else ""
+
+    spark.sql(
+      s"""
+         |create table $tableName (
+         |  ts bigint,
+         |  record_key_col string,
+         |  not_record_key_col string,
+         |  partition_key_col string
+         |) using hudi
+         | options (
+         |  primaryKey ='record_key_col',
+         |  type = '$sqlTableType',
+         |  hoodie.metadata.enable = 'true',
+         |  hoodie.metadata.record.index.enable = 'true',
+         |  hoodie.datasource.write.recordkey.field = 'record_key_col',
+         |  hoodie.enable.data.skipping = 'true',
+         |  hoodie.datasource.write.payload.class = "org.apache.hudi.common.model.OverwriteWithLatestAvroPayload"
+         | )
+         | $partitionedByClause
+         | location '$basePath'
+       """.stripMargin)
+
+    spark.sql("set hoodie.metadata.index.bitmap.enable=true")
+    spark.sql("set hoodie.metadata.index.bitmap.column.list=not_record_key_col")
+    spark.sql(s"insert into $tableName values(1, 'row1', 'abc', 'p1')")
+    spark.sql(s"insert into $tableName values(2, 'row2', 'cde', 'p2')")
+    spark.sql(s"insert into $tableName values(3, 'row3', 'def', 'p3')")
+    spark.sql(s"insert into $tableName values(4, 'row4', 'def', 'p3')")
+    spark.sql(s"insert into $tableName values(5, 'row5', 'def', 'p3')")
+    spark.sql(s"update $tableName set not_record_key_col='xyz' where record_key_col='row5'")
+
+    val recordPrefix_abc = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}abc${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1"
+    val recordPrefix_cde = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}cde${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_def = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}def${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p3"
+    val recordPrefix_xyz = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}xyz${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p3"
+
+    // validate index created successfully
+    metaClient = HoodieTableMetaClient.builder()
+      .setBasePath(basePath)
+      .setConf(HoodieTestUtils.getDefaultStorageConf)
+      .build()
+    val metadataConfig = HoodieMetadataConfig.newBuilder()
+      .withProperties(metaClient.getTableConfig.getProps)
+      .enableBitmapIndex()
+      .withBitmapIndexColumns(spark.sessionState.conf.getConfString(HoodieMetadataConfig.BITMAP_INDEX_FOR_COLUMNS.key()))
+      .build()
+    val metadata = HoodieTableMetadata.create(new HoodieSparkEngineContext(jsc), metaClient.getStorage, metadataConfig, basePath)
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
+    spark.sql(s"select * from $tableName where not_record_key_col='def'").show(false)
+
+    // validate the bitmap index records themselves
     checkContains(s"select key from hudi_metadata('$basePath') where type=8")(
       recordPrefix_abc,
-      recordPrefix_cde, // although deleted, the record won't be removed
+      recordPrefix_cde,
       recordPrefix_def,
       recordPrefix_xyz
     )
 
+    // verify bitmap's cardinality
     checkCardinality(metadata, recordPrefix_abc)(1)
-    checkCardinality(metadata, recordPrefix_cde)(0)
-    checkCardinality(metadata, recordPrefix_def)(0)
+    checkCardinality(metadata, recordPrefix_cde)(1)
+    checkCardinality(metadata, recordPrefix_def)(2)
     checkCardinality(metadata, recordPrefix_xyz)(1)
   }
 
@@ -618,15 +683,15 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
          | location '$basePath'
        """.stripMargin)
 
-//    val states = Seq(
-//      "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-//      "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-//      "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-//      "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-//      "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
-//    )
+    //    val states = Seq(
+    //      "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    //      "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    //      "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    //      "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    //      "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
+    //    )
     val states = Seq(
-      "AL", "WA", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+      "AL", "WA", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA"
     )
     val commuteTypes = Seq("car", "bike", "walk", "train", "scooter")
     val genders = Seq("male", "female")
@@ -643,39 +708,12 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
       val partition_col = Random.nextInt(55)
       (id, gender, commute, state, mileage, partition_col)
     }.toDF("id", "gender", "commute_type", "state", "mileage", "partition_col")
-//
-//    val resourcePath = "/Users/yxchang/code/Aws157Hudi/hudi-spark-datasource/hudi-spark/src/test/resources"
-//    randomDf.write.mode("overwrite").parquet(s"$resourcePath/bitmap_test_data")
-
-    //    randomDf.createOrReplaceTempView("temp_commutes")
 
     spark.sql("set hoodie.parquet.small.file.limit=0")
     spark.sql("set hoodie.metadata.index.bitmap.enable=true")
-    spark.sql("set hoodie.metadata.index.bitmap.column.list=gender,commute_type")
-
+    spark.sql("set hoodie.metadata.index.bitmap.column.list=gender,commute_type,state")
     writeTo(randomDf, tableName, basePath)
 
-//        for (i <- 1 to 20) {
-//          val state = states(Random.nextInt(states.length))
-//          val commute = commuteTypes(Random.nextInt(commuteTypes.length))
-//          val mileage = Random.nextInt(10001)
-//          val gender = genders(Random.nextInt(genders.length))
-//          val id = i
-//          val partition_col = Random.nextInt(200)
-//
-//          val insertSQL =
-//            s"""
-//               |INSERT INTO $tableName (id, gender, commute_type, state, mileage, partition_col)
-//               |VALUES ($id, '$gender', '$commute', '$state', $mileage, $partition_col)
-//         """.stripMargin
-//
-//          spark.sql(insertSQL)
-//        }
-//    spark.sql(
-//      s"""
-//        |INSERT INTO $tableName
-//        |SELECT * FROM temp_commutes
-//      """.stripMargin)
     // validate index created successfully
     metaClient = HoodieTableMetaClient.builder()
       .setBasePath(basePath)
@@ -689,40 +727,17 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     spark.sql("set hoodie.fileIndex.dataSkippingFailureMode=strict")
     spark.sql(s"select * from hudi_metadata('$basePath') where type=8").show(100)
     println("printed metadata content")
-    val query1 = spark.sql(s"select id from $tableName where gender='female' or commute_type='car' order by id")
+    val query1 = spark.sql(s"select id from $tableName where gender='female' and commute_type='car' and state='WA' order by id")
     query1.show(60)
     println("printed sql res")
     val queryRes1 = query1.collect()
 
     spark.sql("set hoodie.enable.data.skipping=false")
-    val query2 = spark.sql(s"select id from $tableName where gender='female' or commute_type='car' order by id")
+    val query2 = spark.sql(s"select id from $tableName where gender='female' and commute_type='car' and state='WA' order by id")
     query2.show(60)
     println("printed the same res")
     val queryRes2 = query2.collect()
-
     assertResult(queryRes1)(queryRes2)
-//    checkAnswer(s"select ts, record_key_col, not_record_key_col, partition_key_col from $tableName where not_record_key_col = 'abc'")(
-//      Seq(1, "row1", "abc", "p1")
-//    )
-//    verifyBitmapQueryPredicate(hudiOpts = hudiOpts, Map("not_record_key_col" -> "abc"), 1, 3)
-//    // filter on a value that doesn't exist
-//    verifyBitmapQueryPredicate(hudiOpts = hudiOpts, Map("not_record_key_col" -> "4399"), 0, 3)
-  }
-
-  def writeTo(df: DataFrame, tableName: String, basePath: String): Unit = {
-    df.write.format("hudi")
-      .option("hoodie.datasource.write.table.type", "COPY_ON_WRITE")
-      .option("hoodie.datasource.write.recordkey.field", "id")
-      .option("hoodie.datasource.write.partitionpath.field", "partition_col")
-      .option("hoodie.table.name", tableName)
-      .option("hoodie.datasource.write.operation", "insert")
-      .option("hoodie.datasource.write.precombine.field", "mileage")
-      .option("hoodie.parquet.small.file.limit", "0")
-//      .option("hoodie.parquet.max.file.size", "10240")
-      .option("hoodie.metadata.index.bitmap.enable", "true")
-      .option("hoodie.metadata.index.bitmap.column.list", "gender,commute_type")
-      .mode("append")
-      .save(basePath)
   }
 
   // TODO support CREATE INDEX for bitmap index
@@ -2370,6 +2385,22 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
       .collectAsList()
     assert(list.size() == 1)
     list.get(0)
+  }
+
+  private def writeTo(df: DataFrame, tableName: String, basePath: String): Unit = {
+    df.write.format("hudi")
+      .option("hoodie.datasource.write.table.type", "COPY_ON_WRITE")
+      .option("hoodie.datasource.write.recordkey.field", "id")
+      .option("hoodie.datasource.write.partitionpath.field", "partition_col")
+      .option("hoodie.table.name", tableName)
+      .option("hoodie.datasource.write.operation", "insert")
+      .option("hoodie.datasource.write.precombine.field", "mileage")
+      .option("hoodie.parquet.small.file.limit", "0")
+      //      .option("hoodie.parquet.max.file.size", "10240")
+      .option("hoodie.metadata.index.bitmap.enable", "true")
+      .option("hoodie.metadata.index.bitmap.column.list", "gender,commute_type")
+      .mode("append")
+      .save(basePath)
   }
 }
 
