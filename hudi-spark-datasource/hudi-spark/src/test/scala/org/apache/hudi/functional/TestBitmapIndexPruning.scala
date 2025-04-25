@@ -19,7 +19,7 @@
 
 package org.apache.hudi.functional
 
-import org.apache.hudi.{DataSourceReadOptions, DataSourceWriteOptions, HoodieFileIndex, HoodieSparkUtils}
+import org.apache.hudi.{HoodieSparkUtils, DataSourceWriteOptions, DataSourceReadOptions, HoodieFileIndex}
 import org.apache.hudi.DataSourceWriteOptions._
 import org.apache.hudi.client.SparkRDDWriteClient
 import org.apache.hudi.client.common.HoodieSparkEngineContext
@@ -36,29 +36,28 @@ import org.apache.hudi.config._
 import org.apache.hudi.exception.{HoodieMetadataIndexException, HoodieWriteConflictException}
 import org.apache.hudi.functional.TestBitmapIndexPruning.SecondaryIndexTestCase
 import org.apache.hudi.metadata._
-import org.apache.hudi.metadata.HoodieMetadataPayload.{BITMAP_INDEX_RECORD_KEY_SEPARATOR, SECONDARY_INDEX_RECORD_KEY_SEPARATOR}
+import org.apache.hudi.metadata.HoodieMetadataPayload.{SECONDARY_INDEX_RECORD_KEY_SEPARATOR, BITMAP_INDEX_RECORD_KEY_SEPARATOR}
 import org.apache.hudi.storage.StoragePath
 import org.apache.hudi.table.HoodieSparkTable
 import org.apache.hudi.testutils.SparkClientFunctionalTestHarness
 import org.apache.hudi.testutils.SparkClientFunctionalTestHarness.getSparkSqlConf
-import org.apache.hudi.util.{JavaConversions, JFunction}
-
+import org.apache.hudi.util.{JFunction, JavaConversions}
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal, Not}
+import org.apache.spark.sql.{SparkSession, Row, DataFrame}
+import org.apache.spark.sql.catalyst.expressions.{Literal, Expression, AttributeReference, Not, EqualTo}
 import org.apache.spark.sql.types._
-import org.junit.jupiter.api.{Tag, Test}
-import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
+import org.junit.jupiter.api.{Test, Tag}
+import org.junit.jupiter.api.Assertions.{assertTrue, assertFalse, assertEquals}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{Arguments, EnumSource, MethodSource}
+import org.junit.jupiter.params.provider.{EnumSource, Arguments, MethodSource}
 import org.junit.jupiter.params.provider.Arguments.arguments
 import org.roaringbitmap.longlong.Roaring64NavigableMap
 import org.scalatest.Assertions.{assertResult, assertThrows}
 
+import java.util
 import java.util.concurrent.Executors
-
 import scala.collection.JavaConverters
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future, Await}
 import scala.concurrent.duration._
 import scala.util.Random
 
@@ -645,6 +644,108 @@ class TestBitmapIndexPruning extends SparkClientFunctionalTestHarness {
     verifyBitmapQueryPredicate(hudiOpts = hudiOpts, Map("not_record_key_col" -> "abc"), 1, 3)
     // filter on a value that doesn't exist
     verifyBitmapQueryPredicate(hudiOpts = hudiOpts, Map("not_record_key_col" -> "4399"), 0, 3)
+  }
+
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType])
+  def testBitmapIndexWithDelete(hoodieTableType: HoodieTableType): Unit = {
+    val tableType = hoodieTableType.name()
+    val isPartitioned = true
+    var hudiOpts = commonOpts
+    hudiOpts = hudiOpts ++ Map(
+      DataSourceWriteOptions.TABLE_TYPE.key -> tableType,
+      DataSourceReadOptions.ENABLE_DATA_SKIPPING.key -> "true")
+    val sqlTableType = if (tableType.equals(HoodieTableType.COPY_ON_WRITE.name())) "cow" else "mor"
+    tableName += "test_bitmap_index_with_filters" + (if (isPartitioned) "_partitioned" else "") + sqlTableType
+    val partitionedByClause = if (isPartitioned) "partitioned by(partition_key_col)" else ""
+
+    spark.sql(
+      s"""
+         |create table $tableName (
+         |  ts bigint,
+         |  record_key_col string,
+         |  not_record_key_col string,
+         |  partition_key_col string
+         |) using hudi
+         | options (
+         |  primaryKey ='record_key_col',
+         |  type = '$sqlTableType',
+         |  hoodie.metadata.enable = 'true',
+         |  hoodie.datasource.write.recordkey.field = 'record_key_col',
+         |  hoodie.enable.data.skipping = 'true',
+         |  hoodie.datasource.write.payload.class = "org.apache.hudi.common.model.OverwriteWithLatestAvroPayload"
+         | )
+         | $partitionedByClause
+         | location '$basePath'
+       """.stripMargin)
+
+    spark.sql("set hoodie.metadata.index.bitmap.enable=true")
+    spark.sql("set hoodie.metadata.index.bitmap.column.list=not_record_key_col")
+    spark.sql(s"insert into $tableName values(1, 'row1', 'abc', 'p1')")
+    spark.sql(s"insert into $tableName values(2, 'row2', 'cde', 'p2')")
+    spark.sql(s"insert into $tableName values(3, 'row3', 'def', 'p3')")
+    spark.sql(s"insert into $tableName values(4, 'row4', 'def', 'p3')")
+
+    // validate index created successfully
+    metaClient = HoodieTableMetaClient.builder()
+      .setBasePath(basePath)
+      .setConf(HoodieTestUtils.getDefaultStorageConf)
+      .build()
+    assert(metaClient.getTableConfig.getMetadataPartitions.contains("bitmap_index"))
+
+    val recordPrefix_abc = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}abc${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p1"
+    val recordPrefix_cde = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}cde${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p2"
+    val recordPrefix_def = s"not_record_key_col${BITMAP_INDEX_RECORD_KEY_SEPARATOR}def${BITMAP_INDEX_RECORD_KEY_SEPARATOR}partition_key_col=p3"
+
+    val metadataConfig = HoodieMetadataConfig.newBuilder()
+      .withProperties(metaClient.getTableConfig.getProps)
+      .enableBitmapIndex()
+      .withBitmapIndexColumns(spark.sessionState.conf.getConfString(HoodieMetadataConfig.BITMAP_INDEX_FOR_COLUMNS.key()))
+      .build()
+    val metadata = HoodieTableMetadata.create(new HoodieSparkEngineContext(jsc), metaClient.getStorage, metadataConfig, basePath)
+
+    val bitmap1 = getBitmapWithPrefix(metadata, recordPrefix_abc)
+    val bitmap2 = getBitmapWithPrefix(metadata, recordPrefix_cde)
+    val bitmap3 = getBitmapWithPrefix(metadata, recordPrefix_def)
+    assertTrue(bitmap1.toArray.toSeq == Seq(0))
+    assertTrue(bitmap2.toArray.toSeq == Seq(0))
+    assertTrue(bitmap3.toArray.toSeq == Seq(0, 1))
+
+    spark.sql(s"delete from $tableName where ts='3'")
+
+    metadata.reset()
+    val bitmap4 = getBitmapWithPrefix(metadata, recordPrefix_abc)
+    val bitmap5 = getBitmapWithPrefix(metadata, recordPrefix_cde)
+    val bitmap6 = getBitmapWithPrefix(metadata, recordPrefix_def)
+    assertTrue(bitmap4.toArray.toSeq == Seq(0))
+    assertTrue(bitmap5.toArray.toSeq == Seq(0))
+    assertTrue(bitmap6.toArray.toSeq == Seq(0)) // after deleted the previous position 0, the position 1 will auto fallback to 0
+  }
+
+  @Test
+  def tempBitmap(): Unit = {
+    val bitmap = new Roaring64NavigableMap();
+    bitmap.add(0)
+    bitmap.add(1)
+    bitmap.add(2)
+    val list = new util.ArrayList[Long]
+
+    bitmap.removeLong(0)
+    val iter = bitmap.getReverseLongIterator
+    while (iter.hasNext) {
+      val next = iter.next
+      bitmap.removeLong(next)
+      list.add(next - 1)
+    }
+//    list.forEach(position => {
+//      bitmap.removeLong(position)
+//    })
+    list.forEach(position => {
+      bitmap.addLong(position)
+    })
+
+    assertTrue(bitmap.toArray.toSeq == Seq(0, 1))
+    println(bitmap)
   }
 
   // TODO clean up this test

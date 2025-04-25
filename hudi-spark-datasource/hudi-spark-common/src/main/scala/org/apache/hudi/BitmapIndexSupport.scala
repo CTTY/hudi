@@ -95,7 +95,7 @@ class BitmapIndexSupport(spark: SparkSession,
       val fileId = fileSlices.head.getFileId
       val bitmap: Roaring64NavigableMap = checkEqualTo(equalToArray, partition, fileId)
       processedFileSlices += 1
-      if (bitmap == null || bitmap.getIntCardinality <= 0) {
+      if (bitmap == null || bitmap.getLongCardinality <= 0) {
         // eliminate this file slice
         prunedFileSlices += 1
         Array.empty[String]

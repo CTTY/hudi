@@ -53,6 +53,7 @@ import org.apache.hudi.common.util.collection.ClosableIterator;
 import org.apache.hudi.common.util.collection.Pair;
 import org.apache.hudi.exception.HoodieException;
 import org.apache.hudi.exception.HoodieIOException;
+import org.apache.hudi.exception.HoodieIndexException;
 import org.apache.hudi.exception.HoodieMetadataException;
 import org.apache.hudi.io.storage.HoodieFileReader;
 import org.apache.hudi.io.storage.HoodieIOFactory;
@@ -62,6 +63,7 @@ import org.apache.hudi.storage.StoragePath;
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
+import org.roaringbitmap.longlong.LongIterator;
 import org.roaringbitmap.longlong.Roaring64NavigableMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -194,7 +196,7 @@ public class BitmapIndexRecordGenerationUtils {
     for each entry in recordKeyToColumnPairsForPreviousFileSlice
       if it is not present in recordKeyToColumnPairsForCurrentFileSlice
         meaning it's deleted
-        update the bitmap for every indexed columns (remove positions)
+        update the bitmap for every indexed columns (remove positions) and decrement the existing positions after the deleted position
   */
   private static Map<String, Roaring64NavigableMap> getUpdatedBitmaps(Map<String, PositionedColumnInfo> recordKeyToColInfoForPreviousFileSlice,
                                                                       Map<String, PositionedColumnInfo> recordKeyToColInfoForCurrentFileSlice,
@@ -215,9 +217,12 @@ public class BitmapIndexRecordGenerationUtils {
         for (String column : newPositionedColumnInfo.columnInfos.keySet()) {
           String oldVal = oldPositionedColumnInfo.columnInfos.get(column);
           String newVal = newPositionedColumnInfo.columnInfos.get(column);
-          // TODO consider the case when vals are null?
+          if (oldVal == null || newVal == null) {
+            throw new HoodieIndexException("Column does not exist in the record! Bitmap index doesn't support schema evolution as of now. "
+                    + "Please check your indexing config: " + column);
+          }
           if (!oldVal.equals(newVal)) {
-            removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, oldVal, oldPositionedColumnInfo.pos);
+            removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, oldVal, oldPositionedColumnInfo.pos, false);
             addPosToBitmap(metadata, partition, fileId, updatedBitmaps, column, newVal, newPositionedColumnInfo.pos);
           }
         }
@@ -228,7 +233,7 @@ public class BitmapIndexRecordGenerationUtils {
       if (!recordKeyToColInfoForCurrentFileSlice.containsKey(recordKey)) {
         // deleted record, remove positions from all associated bitmaps
         oldPositionedColumnInfo.columnInfos.forEach((column, colVal) ->
-                removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, oldPositionedColumnInfo.pos));
+                removePosFromBitmap(metadata, partition, fileId, updatedBitmaps, column, colVal, oldPositionedColumnInfo.pos, true));
       }
     });
 
@@ -254,11 +259,27 @@ public class BitmapIndexRecordGenerationUtils {
                                           Map<String, Roaring64NavigableMap> cachedBitmaps,
                                           String columnName,
                                           String columnVal,
-                                          long pos) {
+                                          long pos,
+                                          boolean isDelete) {
     String bitmapRecordKey = constructBitmapRecordKey(columnName, columnVal, partition, fileId);
     cachedBitmaps
             .computeIfAbsent(bitmapRecordKey, bitmap -> loadBitmapFromMetadata(metadata, bitmapRecordKey))
             .removeLong(pos);
+
+    // decrement the positions after the deleted position by one
+    if (isDelete) {
+      Roaring64NavigableMap bitmap = cachedBitmaps.get(bitmapRecordKey);
+      LongIterator iterator =  bitmap.getReverseLongIterator();
+      List<Long> posToDecrement = new ArrayList<>();
+      while (iterator.hasNext()) {
+        long curPos = iterator.next();
+        if (curPos <= pos) break; // passed the deleted position
+        bitmap.removeLong(curPos);
+        posToDecrement.add(curPos);
+      }
+      posToDecrement.forEach(position -> bitmap.addLong(position - 1));
+      cachedBitmaps.put(bitmapRecordKey, bitmap);
+    }
   }
 
   private static Roaring64NavigableMap loadBitmapFromMetadata(HoodieBackedTableMetadata metadata, String bitmapRecordKey) {
