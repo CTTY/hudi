@@ -33,7 +33,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -798,6 +800,47 @@ public class TestHFileReader {
           )
       );
     }
+  }
+
+  @Test
+  public void yxchangTest() throws IOException {
+    String file1 = "/bitmap/bitmap-index-0000-0_0-50-304_00000000000000002.hfile";
+    String file2 = "/bitmap/bitmap-index-0001-0_1-50-305_00000000000000002.hfile";
+    String file3 = "/bitmap/bitmap-index-0000-0_2-116-2256_20250424210947027.hfile";
+    String file4 = "/bitmap/bitmap-index-0001-0_1-116-2255_20250424210947027.hfile";
+    try (HFileReader reader = getHFileReader(file4)) {
+      reader.initializeMetadata();
+      String keyStr = "gender$F$WA$18148253-96d1-4c8b-b36d-f9cf18fa5d0d-0";
+      String keyStrPre = "Key{gender$M$WY$d640b676-3993-4857-8bf2-f4c2573d1d4d-0}";
+      Key key = new UTF8StringKey(keyStr);
+
+      Map<String, String> map = new HashMap<>();
+      reader.seekTo();
+      while (reader.next()) {
+        KeyValue kv = reader.getKeyValue().get();
+        String kvKey = kv.getKey().toString();
+        if (map.containsKey(kvKey)) {
+          System.out.println("Found duplicate key!! " + kvKey);
+        } else {
+          map.put(kvKey, kv.getBytes().toString());
+        }
+      }
+
+      int success = reader.seekTo(key);
+      KeyValue kv1 = reader.getKeyValue().get();
+
+      boolean bol = reader.next();
+      KeyValue kv2 = reader.getKeyValue().get();
+      int test = 0;
+
+    }
+
+    byte[] bytes1 = readHFileFromResources(file1);
+    byte[] bytes2 = readHFileFromResources(file2);
+    String str1 = bytes1.toString();
+    String str2 = bytes2.toString();
+
+    System.out.println("done");
   }
 
   @Test

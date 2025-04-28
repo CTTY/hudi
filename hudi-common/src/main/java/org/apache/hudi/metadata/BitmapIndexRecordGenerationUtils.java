@@ -28,20 +28,18 @@ import org.apache.hudi.common.fs.FSUtils;
 import org.apache.hudi.common.model.FileSlice;
 import org.apache.hudi.common.model.HoodieAvroRecord;
 import org.apache.hudi.common.model.HoodieBaseFile;
-import org.apache.hudi.common.model.HoodieCommitMetadata;
-import org.apache.hudi.common.model.HoodieFileFormat;
 import org.apache.hudi.common.model.HoodieKey;
 import org.apache.hudi.common.model.HoodieLogFile;
 import org.apache.hudi.common.model.HoodieRecord;
 import org.apache.hudi.common.model.HoodieRecordMerger;
 import org.apache.hudi.common.model.HoodieWriteStat;
-import org.apache.hudi.common.model.WriteOperationType;
 import org.apache.hudi.common.table.HoodieTableMetaClient;
 import org.apache.hudi.common.table.TableSchemaResolver;
 import org.apache.hudi.common.table.log.HoodieFileSliceReader;
 import org.apache.hudi.common.table.log.HoodieMergedLogRecordScanner;
 import org.apache.hudi.common.table.log.HoodieUnMergedLogRecordScanner;
 import org.apache.hudi.common.table.log.LogReaderUtils;
+import org.apache.hudi.common.table.timeline.HoodieInstant;
 import org.apache.hudi.common.table.view.HoodieTableFileSystemView;
 import org.apache.hudi.common.util.CollectionUtils;
 import org.apache.hudi.common.util.FileIOUtils;
@@ -71,11 +69,12 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -85,11 +84,11 @@ import static org.apache.hudi.common.config.HoodieCommonConfig.DISK_MAP_BITCASK_
 import static org.apache.hudi.common.config.HoodieCommonConfig.MAX_MEMORY_FOR_COMPACTION;
 import static org.apache.hudi.common.config.HoodieCommonConfig.SPILLABLE_DISK_MAP_TYPE;
 import static org.apache.hudi.common.util.ConfigUtils.getReaderConfigs;
-import static org.apache.hudi.common.util.ValidationUtils.checkState;
 import static org.apache.hudi.metadata.HoodieMetadataPayload.BITMAP_INDEX_RECORD_KEY_SEPARATOR;
 import static org.apache.hudi.metadata.HoodieTableMetadata.EMPTY_PARTITION_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadata.NON_PARTITIONED_NAME;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX;
+import static org.apache.hudi.metadata.HoodieTableMetadataUtil.filePath;
 import static org.apache.hudi.metadata.HoodieTableMetadataUtil.getPartitionLatestFileSlicesIncludingInflight;
 
 /**
@@ -121,7 +120,7 @@ public class BitmapIndexRecordGenerationUtils {
                                                                                HoodieTableMetaClient dataMetaClient,
                                                                                HoodieEngineContext engineContext,
                                                                                EngineType engineType) {
-    // Secondary index cannot support logs having inserts with current offering. So, lets validate that.
+    // Bitmap index cannot support logs having inserts with current offering. So, lets validate that.
     if (allWriteStats.stream().anyMatch(writeStat -> {
       String fileName = FSUtils.getFileName(writeStat.getPath(), writeStat.getPartitionPath());
       return FSUtils.isLogFile(fileName) && writeStat.getNumInserts() > 0;
@@ -131,6 +130,7 @@ public class BitmapIndexRecordGenerationUtils {
 
     Schema tableSchema;
     try {
+      // TODO fix this and use a different logic to init bitmap index
       // cannot use HoodieTableMetadataUtil.tryResolveSchemaForTable because this may be the table's first commit
       tableSchema = new TableSchemaResolver(dataMetaClient).getTableAvroSchema();
     } catch (Exception e) {
@@ -139,7 +139,7 @@ public class BitmapIndexRecordGenerationUtils {
     Map<String, List<HoodieWriteStat>> writeStatsByFileId = allWriteStats.stream().collect(Collectors.groupingBy(HoodieWriteStat::getFileId));
     int parallelism = Math.max(Math.min(writeStatsByFileId.size(), metadataConfig.getBitmapIndexParallelism()), 1);
 
-    return engineContext.parallelize(new ArrayList<>(writeStatsByFileId.entrySet()), parallelism).flatMap(writeStatsByFileIdEntry -> {
+    HoodieData<HoodieRecord> ret = engineContext.parallelize(new ArrayList<>(writeStatsByFileId.entrySet()), parallelism).flatMap(writeStatsByFileIdEntry -> {
       String fileId = writeStatsByFileIdEntry.getKey();
       List<HoodieWriteStat> writeStats = writeStatsByFileIdEntry.getValue();
       String partition = writeStats.get(0).getPartitionPath();
@@ -176,11 +176,29 @@ public class BitmapIndexRecordGenerationUtils {
                       partition, Option.ofNullable(currentBaseFile),
                       metadataConfig.getColumnsEnabledForBitmapIndex(), instantTime);
       List<HoodieRecord> records = new ArrayList<>();
+      Set<String> bitmapRecordKeys = new HashSet<>();
       // get updated map<bitmapRecordKey, bitmap> and convert it into bitmap records
       getUpdatedBitmaps(recordKeyToColInfoForPreviousFileSlice, recordKeyToColInfoForCurrentFileSlice, metadata, partition, fileId)
-              .forEach((bitmapRecordKey, bitmap) -> records.add(HoodieMetadataPayload.createBitmapIndexRecord(bitmapRecordKey, bitmap)));
+              .forEach((bitmapRecordKey, bitmap) -> {
+                records.add(HoodieMetadataPayload.createBitmapIndexRecord(bitmapRecordKey, bitmap));
+                if (!bitmapRecordKeys.add(bitmapRecordKey)) {
+                  // TODO remove this
+                  LOG.error("shawn: DUPLICATE bitmapRecordKey FOUND!!!: {}", bitmapRecordKey);
+                }
+              });
       return records.iterator();
     });
+
+    // TODO remove this
+    Set<String> bitmapRecordKeys = new HashSet<>();
+    List<HoodieRecord> collectedRecords = ret.collectAsList();
+    collectedRecords.forEach(record -> {
+      if (!bitmapRecordKeys.add(record.getRecordKey())) {
+        LOG.error("shawn: DUPLICATE bitmapRecordKey FOUND AFTER flatMap!!!: {}", record.getRecordKey());
+      }
+    });
+    LOG.warn("shawn: Generated bitmap index records based on write stats");
+    return ret;
   }
 
   /*
@@ -273,7 +291,9 @@ public class BitmapIndexRecordGenerationUtils {
       List<Long> posToDecrement = new ArrayList<>();
       while (iterator.hasNext()) {
         long curPos = iterator.next();
-        if (curPos <= pos) break; // passed the deleted position
+        if (curPos <= pos) {
+          break; // passed the deleted position
+        }
         bitmap.removeLong(curPos);
         posToDecrement.add(curPos);
       }
@@ -375,58 +395,120 @@ public class BitmapIndexRecordGenerationUtils {
     return null;
   }
 
-  // TODO switch to use convertWriteStatsToBitmapIndexRecords above that handles update and delete
-  public static HoodieData<HoodieRecord> convertMetadataToBitmapIndexRecords(
-          HoodieCommitMetadata commitMetadata,
-          HoodieEngineContext engineContext,
-          HoodieTableMetaClient metaClient,
-          HoodieMetadataConfig metadataConfig,
-          EngineType engineType) {
-    List<HoodieWriteStat> allWriteStats = commitMetadata.getPartitionToWriteStats().values().stream()
-            .flatMap(Collection::stream).collect(Collectors.toList());
-    if (allWriteStats.isEmpty() || commitMetadata.getOperationType() == WriteOperationType.COMPACT) {
+  public static HoodieData<HoodieRecord> readBitmapRecordsFromFileSlices(HoodieEngineContext engineContext,
+                                                                         List<Pair<String, FileSlice>> partitionFileSlicePairs,
+                                                                         int bitmapIndexMaxParallelism,
+                                                                         String activeModule,
+                                                                         HoodieTableMetaClient metaClient,
+                                                                         EngineType engineType,
+                                                                         List<String> columnsToIndex) {
+    if (partitionFileSlicePairs.isEmpty()) {
       return engineContext.emptyHoodieData();
     }
-    List<String> columnsToIndex = metadataConfig.getColumnsEnabledForBitmapIndex();
-
-    int parallelism = Math.max(Math.min(allWriteStats.size(), metadataConfig.getBitmapIndexParallelism()), 1);
-    Map<String, List<HoodieWriteStat>> writeStatsByFileId = allWriteStats.stream().collect(Collectors.groupingBy(HoodieWriteStat::getFileId));
-    HoodieFileFormat baseFileFormat = metaClient.getTableConfig().getBaseFileFormat();
+    final int parallelism = Math.min(partitionFileSlicePairs.size(), bitmapIndexMaxParallelism);
+    final StoragePath basePath = metaClient.getBasePath();
     Schema tableSchema;
     try {
-      // TODO revisit this schema logic... why tryResolveSchema doesn't work?
-      tableSchema = metaClient.getTableConfig().getTableCreateSchema().get();
+      tableSchema = new TableSchemaResolver(metaClient).getTableAvroSchema();
     } catch (Exception e) {
       throw new HoodieException("Failed to get latest schema for " + metaClient.getBasePath(), e);
     }
-    return engineContext.parallelize(new ArrayList<>(writeStatsByFileId.entrySet()), parallelism)
-            .flatMap(writeStatsByFileIdEntry -> {
-              String fileId = writeStatsByFileIdEntry.getKey();
-              List<HoodieWriteStat> writeStats = writeStatsByFileIdEntry.getValue();
-              // Partition the write stats into base file and log file write stats
-              List<HoodieWriteStat> baseFileWriteStats = writeStats.stream()
-                      .filter(writeStat -> writeStat.getPath().endsWith(baseFileFormat.getFileExtension()))
-                      .collect(Collectors.toList());
-              List<HoodieWriteStat> logFileWriteStats = writeStats.stream()
-                      .filter(writeStat -> FSUtils.isLogFile(new StoragePath(writeStats.get(0).getPath())))
-                      .collect(Collectors.toList());
-              // Ensure that only one of base file or log file write stats exists
-              checkState(baseFileWriteStats.isEmpty() || logFileWriteStats.isEmpty(),
-                      "A single fileId cannot have both base file and log file write stats in the same commit. FileId: " + fileId);
-              // Process file write stats
-              baseFileWriteStats.addAll(logFileWriteStats);
-              List<HoodieWriteStat> baseOrLogFileWriteStats = baseFileWriteStats;
-              return baseOrLogFileWriteStats.stream()
-                      .flatMap(writeStat -> {
-                        return createBitmapFromFile(metaClient, writeStat.getPartitionPath(),
-                                new StoragePath(writeStat.getPath()).getName(), columnsToIndex, tableSchema,
-                                metadataConfig.getMaxReaderBufferSize(), engineType);
-                      })
-                      .iterator();
-            });
+
+    engineContext.setJobStatus(activeModule, "Secondary Index: reading secondary keys from " + partitionFileSlicePairs.size() + " file slices");
+    return engineContext.parallelize(partitionFileSlicePairs, parallelism).flatMap(partitionAndBaseFile -> {
+      final String partition = partitionAndBaseFile.getKey();
+      final FileSlice fileSlice = partitionAndBaseFile.getValue();
+      List<String> logFilePaths = fileSlice.getLogFiles().sorted(HoodieLogFile.getLogFileComparator()).map(l -> l.getPath().toString()).collect(Collectors.toList());
+      Option<StoragePath> dataFilePath = Option.ofNullable(fileSlice.getBaseFile().map(baseFile -> filePath(basePath, partition, baseFile.getFileName())).orElseGet(null));
+      Schema readerSchema;
+      if (dataFilePath.isPresent()) {
+        readerSchema = HoodieIOFactory.getIOFactory(metaClient.getStorage())
+                .getFileFormatUtils(metaClient.getTableConfig().getBaseFileFormat())
+                .readAvroSchema(metaClient.getStorage(), dataFilePath.get());
+      } else {
+        readerSchema = tableSchema;
+      }
+      return createBitmapIndexRecordsIterator(metaClient, engineType, logFilePaths, readerSchema, partition, dataFilePath,
+              metaClient.getActiveTimeline().filterCompletedInstants().lastInstant().map(HoodieInstant::requestedTime).orElse(""),
+              columnsToIndex);
+    });
   }
 
-  // TODO verify that this is only used for initialization
+  private static ClosableIterator<HoodieRecord> createBitmapIndexRecordsIterator(HoodieTableMetaClient metaClient,
+                                                                                 EngineType engineType, List<String> logFilePaths,
+                                                                                 Schema tableSchema, String partition,
+                                                                                 Option<StoragePath> dataFilePath,
+                                                                                 String instantTime,
+                                                                                 List<String> columnsToIndex) throws Exception {
+    final String basePath = metaClient.getBasePath().toString();
+    final StorageConfiguration<?> storageConf = metaClient.getStorageConf();
+
+    HoodieRecordMerger recordMerger = HoodieRecordUtils.createRecordMerger(
+            basePath,
+            engineType,
+            Collections.emptyList(),
+            metaClient.getTableConfig().getRecordMergeStrategyId());
+
+    HoodieMergedLogRecordScanner mergedLogRecordScanner = HoodieMergedLogRecordScanner.newBuilder()
+            .withStorage(metaClient.getStorage())
+            .withBasePath(metaClient.getBasePath())
+            .withLogFilePaths(logFilePaths)
+            .withReaderSchema(tableSchema)
+            .withLatestInstantTime(instantTime)
+            .withReverseReader(false)
+            .withMaxMemorySizeInBytes(storageConf.getLong(MAX_MEMORY_FOR_COMPACTION.key(), DEFAULT_MAX_MEMORY_FOR_SPILLABLE_MAP_IN_BYTES))
+            .withBufferSize(HoodieMetadataConfig.MAX_READER_BUFFER_SIZE_PROP.defaultValue())
+            .withSpillableMapBasePath(FileIOUtils.getDefaultSpillableMapBasePath())
+            .withPartition(partition)
+            .withOptimizedLogBlocksScan(storageConf.getBoolean("hoodie" + HoodieMetadataConfig.OPTIMIZED_LOG_BLOCKS_SCAN, false))
+            .withDiskMapType(storageConf.getEnum(SPILLABLE_DISK_MAP_TYPE.key(), SPILLABLE_DISK_MAP_TYPE.defaultValue()))
+            .withBitCaskDiskMapCompressionEnabled(storageConf.getBoolean(DISK_MAP_BITCASK_COMPRESSION_ENABLED.key(), DISK_MAP_BITCASK_COMPRESSION_ENABLED.defaultValue()))
+            .withRecordMerger(recordMerger)
+            .withTableMetaClient(metaClient)
+            .build();
+
+    Option<HoodieFileReader> baseFileReader = Option.empty();
+    String fileId;
+    if (dataFilePath.isPresent()) {
+      baseFileReader = Option.of(HoodieIOFactory.getIOFactory(metaClient.getStorage()).getReaderFactory(recordMerger.getRecordType()).getFileReader(getReaderConfigs(storageConf), dataFilePath.get()));
+      fileId = FSUtils.getFileId(dataFilePath.get().getName());
+    } else {
+      fileId = FSUtils.getFileId(new StoragePath(logFilePaths.get(0).toString()).getName());
+    }
+    HoodieFileSliceReader fileSliceReader = new HoodieFileSliceReader(baseFileReader, mergedLogRecordScanner, tableSchema, metaClient.getTableConfig().getPreCombineField(), recordMerger,
+            metaClient.getTableConfig().getProps(),
+            Option.empty(), Option.empty());
+
+    Map<String, Roaring64NavigableMap> indexRecordKeyToBitmap = new HashMap<>();
+    try (ClosableIterator<HoodieRecord> fileSliceIterator = ClosableIterator.wrap(fileSliceReader)) {
+      long rowPosition = 0L;
+      // scan all recrods and update bitmaps
+      while (fileSliceIterator.hasNext()) {
+        HoodieRecord record = fileSliceIterator.next();
+        Map<String, String> columnInfos = getColumnInfos(record, tableSchema, columnsToIndex);
+        final long curRow = rowPosition; // has to assign this to a final to use it in lambda
+        columnInfos.forEach((colName, colValue) -> {
+          String bitmapRecordKey = constructBitmapRecordKey(colName, colValue, partition, fileId);
+          indexRecordKeyToBitmap
+                  .computeIfAbsent(bitmapRecordKey, bitmap -> new Roaring64NavigableMap())
+                  .addLong(curRow);
+        });
+        rowPosition++;
+      }
+    }
+
+    Set<String> bitmapRecordKeys = new HashSet<>();
+    List<HoodieRecord> records = new ArrayList<>();
+    indexRecordKeyToBitmap.forEach((bitmapRecordKey, bitmap) -> {
+      records.add(HoodieMetadataPayload.createBitmapIndexRecord(bitmapRecordKey, bitmap));
+      if (!bitmapRecordKeys.add(bitmapRecordKey)) {
+        LOG.error("shawn: DUPLICATE bitmapRecordKey FOUND!!!: {}", bitmapRecordKey);
+      }
+    });
+    return ClosableIterator.wrap(records.iterator());
+  }
+
+  // TODO remove this
   public static Stream<HoodieRecord> createBitmapFromFile(HoodieTableMetaClient metaClient, String partitionPath,
                                                           String fileName, List<String> columnsToIndex,
                                                           Schema tableSchema, int maxBufferSize, EngineType engineType) {

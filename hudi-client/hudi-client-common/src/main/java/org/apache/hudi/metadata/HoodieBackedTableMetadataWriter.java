@@ -88,6 +88,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -105,6 +106,7 @@ import static org.apache.hudi.common.table.timeline.HoodieTimeline.COMMIT_ACTION
 import static org.apache.hudi.common.table.timeline.InstantComparison.LESSER_THAN_OR_EQUALS;
 import static org.apache.hudi.common.table.timeline.InstantComparison.compareTimestamps;
 import static org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.convertWriteStatsToBitmapIndexRecords;
+import static org.apache.hudi.metadata.BitmapIndexRecordGenerationUtils.readBitmapRecordsFromFileSlices;
 import static org.apache.hudi.metadata.HoodieMetadataWriteUtils.createMetadataWriteConfig;
 import static org.apache.hudi.metadata.HoodieTableMetadata.METADATA_TABLE_NAME_SUFFIX;
 import static org.apache.hudi.metadata.HoodieTableMetadata.SOLO_COMMIT_TIMESTAMP;
@@ -480,9 +482,9 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
             break;
           case BITMAP_INDEX:
             partitionName = BITMAP_INDEX.getPartitionPath();
-            Pair<List<String>, Pair<Integer, HoodieData<HoodieRecord>>> bitmapColumnsAndRecord = initializeBitmapPartition(partitionToFilesMap);
-            columnsToIndex = bitmapColumnsAndRecord.getKey();
-            fileGroupCountAndRecordsPair = bitmapColumnsAndRecord.getValue();
+            // Pair<List<String>, Pair<Integer, HoodieData<HoodieRecord>>> bitmapColumnsAndRecord = initializeBitmapPartition(partitionToFilesMap);
+            columnsToIndex = dataWriteConfig.getMetadataConfig().getColumnsEnabledForBitmapIndex();
+            fileGroupCountAndRecordsPair = initializeBitmapPartition();
             break;
           default:
             throw new HoodieMetadataException(String.format("Unsupported MDT partition type: %s", partitionType));
@@ -671,6 +673,40 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
     return Pair.of(fileGroupCount, records);
   }
 
+  private Pair<Integer, HoodieData<HoodieRecord>> initializeBitmapPartition() throws IOException {
+    List<Pair<String, FileSlice>> partitionFileSlicePairs = getPartitionFileSlicePairs();
+
+    int parallelism = Math.min(partitionFileSlicePairs.size(), dataWriteConfig.getMetadataConfig().getBitmapIndexParallelism());
+    HoodieData<HoodieRecord> records = readBitmapRecordsFromFileSlices(
+            engineContext,
+            partitionFileSlicePairs,
+            parallelism,
+            this.getClass().getSimpleName(),
+            dataMetaClient,
+            getEngineType(),
+            dataWriteConfig.getMetadataConfig().getColumnsEnabledForBitmapIndex());
+
+    // TODO remove this
+    List<HoodieRecord> recordList = records.collectAsList();
+    Set<String> recordKeys = new HashSet<>();
+    recordList.forEach(record -> {
+      String key = record.getKey().getRecordKey();
+      if (!recordKeys.add(key)) {
+        LOG.error("shawn: FOUND DUPLICATE KEYS WHEN INITIALIZING! {}", key);
+      }
+    });
+    LOG.info("shawn: DONE INITIALIZING BITMAP RECORDS");
+
+    // Initialize the file groups - using the same estimation logic as that of record index
+    final int fileGroupCount = HoodieTableMetadataUtil.estimateFileGroupCount(RECORD_INDEX, records.count(),
+            RECORD_INDEX_AVERAGE_RECORD_SIZE, dataWriteConfig.getRecordIndexMinFileGroupCount(),
+            dataWriteConfig.getRecordIndexMaxFileGroupCount(), dataWriteConfig.getRecordIndexGrowthFactor(),
+            dataWriteConfig.getRecordIndexMaxFileGroupSizeBytes());
+
+    return Pair.of(fileGroupCount, records);
+  }
+
+  // TODO remove this method
   private Pair<List<String>, Pair<Integer, HoodieData<HoodieRecord>>> initializeBitmapPartition(Map<String, Map<String, Long>> partitionToFilesMap) {
     // TODO add the same config for bitmap index
     final int fileGroupCount = dataWriteConfig.getMetadataConfig().getColumnStatsIndexFileGroupCount();

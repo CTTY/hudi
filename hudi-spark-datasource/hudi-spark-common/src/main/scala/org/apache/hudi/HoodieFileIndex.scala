@@ -399,11 +399,15 @@ case class HoodieFileIndex(spark: SparkSession,
 
     lazy val queryReferencedColumns = collectReferencedColumns(spark, queryFilters, schema)
     if (isDataSkippingEnabled) {
+      log.error("data skipping enabled")
       for(indexSupport: SparkBaseIndexSupport <- indicesSupport) {
+        log.error(s"using index support: ${indexSupport.getClass}")
         if (indexSupport.isIndexAvailable && indexSupport.supportsQueryType(options)) {
+          log.error(s"using index support: ${indexSupport.getClass} to prune files")
           val prunedFileNames = indexSupport.computeCandidateIsStrict(spark, this, queryFilters, queryReferencedColumns,
             prunedPartitionsAndFileSlices, shouldPushDownFilesFilter)
-          if (prunedFileNames.nonEmpty && prunedFileNames.get.nonEmpty) {
+          if (prunedFileNames.nonEmpty) {
+            log.error(s"using index support: ${indexSupport.getClass} to prune files, non empty result!")
             return Try(prunedFileNames)
           }
         }

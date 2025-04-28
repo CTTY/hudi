@@ -47,6 +47,9 @@ class BitmapIndexSupport(spark: SparkSession,
   }
 
   override def isIndexAvailable: Boolean = {
+    log.error(s"metaconfig enabled: ${metadataConfig.isEnabled}")
+    log.error(s"metaconfig bitmap enabled: ${metadataConfig.isBitmapIndexEnabled}")
+    log.error(s"metadata partitions: ${metaClient.getTableConfig.getMetadataPartitions}")
     metadataConfig.isEnabled &&
       metadataConfig.isBitmapIndexEnabled &&
       metaClient.getTableConfig.getMetadataPartitions.contains(HoodieTableMetadataUtil.PARTITION_NAME_BITMAP_INDEX)
@@ -110,7 +113,11 @@ class BitmapIndexSupport(spark: SparkSession,
     log.info(f"Bitmap index has pruned ${prunedFileSlices} file slices out of ${processedFileSlices} file slices, " +
       f"the pruning ratio is ${ratio}")
 
-    Option(candidateFileNames)
+    if (candidateFileNames.isEmpty) {
+      Option.empty
+    } else {
+      Option(candidateFileNames)
+    }
   }
 
   override def invalidateCaches(): Unit = {
